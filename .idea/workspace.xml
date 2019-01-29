@@ -44,6 +44,11 @@
             <path>
               <item name="paymentgw" type="b2602c69:ProjectViewProjectNode" />
               <item name="paymentgw" type="462c0819:PsiDirectoryNode" />
+              <item name=".idea" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="paymentgw" type="b2602c69:ProjectViewProjectNode" />
+              <item name="paymentgw" type="462c0819:PsiDirectoryNode" />
               <item name="src" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
@@ -51,6 +56,16 @@
               <item name="paymentgw" type="462c0819:PsiDirectoryNode" />
               <item name="src" type="462c0819:PsiDirectoryNode" />
               <item name="main" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="paymentgw" type="b2602c69:ProjectViewProjectNode" />
+              <item name="paymentgw" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+              <item name="test" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="paymentgw" type="b2602c69:ProjectViewProjectNode" />
+              <item name="External Libraries" type="cb654da1:ExternalLibrariesNode" />
             </path>
           </expand>
           <select />
@@ -91,12 +106,12 @@
       <option name="presentableId" value="Default" />
       <updated>1548754275628</updated>
       <workItem from="1548754279301" duration="636000" />
-      <workItem from="1548754933945" duration="249000" />
+      <workItem from="1548754933945" duration="588000" />
     </task>
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="885000" />
+    <option name="totallyTimeSpent" value="1224000" />
   </component>
   <component name="ToolWindowManager">
     <frame x="-8" y="-8" width="1936" height="1056" extended-state="6" />
