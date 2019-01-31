@@ -252,6 +252,8 @@ public class DbInterface {
                 pstm.setObject(13, UUID.randomUUID().toString(), Types.OTHER);
                 pstm.setBoolean(14, true);
                 pstm.setString(15, task.getUser_id());
+                pstm.setString(16, null);
+                pstm.setString(17, GlobalVariables.PAY_COINGATE);
 
                 int result = pstm.executeUpdate();
             } else {
@@ -1160,7 +1162,7 @@ public class DbInterface {
                 pstm.setString(12, status);
                 pstm.setObject(13, UUID.randomUUID().toString(), Types.OTHER);
                 pstm.setBoolean(14, true);
-                pstm.setString(15, "");
+                pstm.setString(15, task.getUser_id());
                 pstm.setObject(16, revenue);
                 pstm.setString(17, GlobalVariables.PAY_PAYPAL);
 

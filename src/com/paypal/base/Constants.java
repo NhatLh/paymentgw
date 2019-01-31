@@ -5,7 +5,7 @@ public final class Constants {
     private Constants() {
     }
 
-	// General Constants
+    // General Constants
     // UTF-8 Encoding format
     public static final String ENCODING_FORMAT = "UTF-8";
 
@@ -24,7 +24,7 @@ public final class Constants {
     // Default SDK configuration file name
     public static final String DEFAULT_CONFIGURATION_FILE = "sdk_config.properties";
 
-	// HTTP Header Constants
+    // HTTP Header Constants
     // HTTP Content-Type Header
     public static final String HTTP_CONTENT_TYPE_HEADER = "Content-Type";
 
@@ -73,7 +73,7 @@ public final class Constants {
     // PayPal Sandbox Email Address for AA Header
     public static final String PAYPAL_SANDBOX_EMAIL_ADDRESS_HEADER = "X-PAYPAL-SANDBOX-EMAIL-ADDRESS";
 
-	// Constants key defined for configuration options in application properties
+    // Constants key defined for configuration options in application properties
     // End point
     public static final String ENDPOINT = "service.EndPoint";
 
@@ -143,7 +143,7 @@ public final class Constants {
     // Sandbox Email Address Key
     public static final String SANDBOX_EMAIL_ADDRESS = "sandbox.EmailAddress";
 
-	// HTTP Configurations Defaults
+    // HTTP Configurations Defaults
     // HTTP Method Default
     public static final String HTTP_CONFIG_DEFAULT_HTTP_METHOD = "POST";
 

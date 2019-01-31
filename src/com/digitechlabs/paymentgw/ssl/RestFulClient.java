@@ -73,7 +73,7 @@ public class RestFulClient {
 //        for (int i = 0; i < values.length; i++) {
 //            logger.info("VALUE:" + values[i]);
 //        }
-        logger.info("starting post ...");
+        logger.info("starting post ..." + this.url);
         Client client = null;
         String result = "";
         try {
@@ -107,7 +107,7 @@ public class RestFulClient {
         for (int i = 0; i < values.length; i++) {
             logger.info("VALUE:" + values[i]);
         }
-        logger.info("starting post ...");
+        logger.info("starting post ..." + this.url);
         Client client = null;
         String result = "";
         try {
@@ -138,7 +138,7 @@ public class RestFulClient {
         long start = System.currentTimeMillis();
 
         String[] values = new String[]{pay_currency};
-        logger.info("starting post ...");
+        logger.info("starting post ..." + this.url);
         Client client = null;
         String result = "";
         try {
@@ -169,7 +169,7 @@ public class RestFulClient {
     public String notifyService(CallbackTask task) {
         long start = System.currentTimeMillis();
         String[] values = new String[]{task.getOrder_id()};
-        logger.info("starting post ...");
+        logger.info("starting post ..." + this.url);
         Client client = null;
         String result = "";
         try {
@@ -198,7 +198,7 @@ public class RestFulClient {
     public void requestWithdraw(WithdrawRequestTask task) {
         long start = System.currentTimeMillis();
         String[] values = new String[]{task.getCurrency(), task.getAmount(), task.getTo_address()};
-        logger.info("starting post ...");
+        logger.info("starting post ..." + this.url);
         Client client = null;
         String result = "";
         try {
@@ -274,7 +274,7 @@ public class RestFulClient {
     public String createPayment(String request) {
         long start = System.currentTimeMillis();
 
-        logger.info("starting post ...");
+        logger.info("starting post ..." + ConfigLoader.getInstance().getPaypalUrlCreatePayment());
         Client client = null;
         String result = "";
         try {
@@ -290,6 +290,10 @@ public class RestFulClient {
             result = getStringFromInputStream(response.getEntityInputStream());
         } catch (ClientHandlerException | UniformInterfaceException ex) {
             logger.error("Exception " + ex.getMessage(), ex);
+            return null;
+        } catch (Exception ex) {
+            logger.error("Exception " + ex.getMessage(), ex);
+            return null;
         } finally {
             if (client != null) {
                 client.destroy();
@@ -304,7 +308,7 @@ public class RestFulClient {
         long start = System.currentTimeMillis();
         ClientResponse response = null;
         ExeResponse resp = null;
-        logger.info("starting post ...");
+        logger.info("starting post ..." + url);
         Client client = null;
         String result = "";
         try {
@@ -336,7 +340,7 @@ public class RestFulClient {
     public String notifyBookFail(String request) {
         long start = System.currentTimeMillis();
         ClientResponse response = null;
-        logger.info("starting post ...");
+        logger.info("starting post ..." + ConfigLoader.getInstance().getNotifyBookFailUrl());
         Client client = null;
         String result = "";
         try {
@@ -370,7 +374,7 @@ public class RestFulClient {
 //        for (int i = 0; i < values.length; i++) {
 //            logger.info("VALUE:" + values[i]);
 //        }
-        logger.info("starting post ...");
+        logger.info("starting post ..." + ConfigLoader.getInstance().getPaypalUrlGetToken());
         Client client = null;
         String result = "";
         try {
@@ -411,7 +415,7 @@ public class RestFulClient {
 //        for (int i = 0; i < values.length; i++) {
 //            logger.info("VALUE:" + values[i]);
 //        }
-        logger.info("starting post ...");
+        logger.info("starting post ..." + url);
         Client client = null;
         String result = "";
         try {
@@ -498,7 +502,7 @@ public class RestFulClient {
             long start = System.currentTimeMillis();
             String[] values = new String[]{task.getCurrency(), task.getAmount(), task.getTo_address()};
             JSONObject request = makeJsonFromArray(GlobalVariables.WITHDRAW_ARRAY, values);
-            logger.info("starting post ...");
+            logger.info("starting post ..." + this.url);
             client = new DefaultHttpClient();
             post = new HttpPost(this.url);
 

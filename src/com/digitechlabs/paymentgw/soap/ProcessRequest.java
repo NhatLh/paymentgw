@@ -31,8 +31,6 @@ import com.digitechlabs.paymentgw.paypal.client.request.response.PaymentClientRe
 import com.digitechlabs.paymentgw.paypal.client.request.response.Data;
 import com.digitechlabs.paymentgw.paypal.execute.response.ExeResponse;
 import com.digitechlabs.paymentgw.paypal.execute.response.ExecutePaymentResponse;
-import com.digitechlabs.paymentgw.paypal.execute.response.Link_;
-import com.digitechlabs.paymentgw.paypal.execute.response.RelatedResource;
 import com.digitechlabs.paymentgw.paypal.refund.RefundResponse;
 import com.digitechlabs.paymentgw.paypal.request.ExecutePayment;
 import com.digitechlabs.paymentgw.paypal.request.response.CreatePaymentResponse;
@@ -2153,6 +2151,7 @@ public class ProcessRequest implements Runnable {
                         IDgenerator.getInstance().genID());
             }
 
+            //remove object
             GlobalObject.getInstance().getHashOrder().remove(bookRspTask.getOrder_id());
         } else if (object instanceof CreatePaymentTask) {
             CreatePaymentTask paymentPaypalTask = (CreatePaymentTask) object;
@@ -2169,6 +2168,8 @@ public class ProcessRequest implements Runnable {
 
                     RefundResponse refundRsp = gson.fromJson(refundResult, RefundResponse.class);
                     dbInf.insertOrderHist(paymentPaypalTask, "refund_" + refundRsp.getState(), null);
+                } else {
+                    logger.info("refund URL isn't found --> please check");
                 }
 
                 if (status.equalsIgnoreCase("EXPIRED")) {
@@ -2180,6 +2181,11 @@ public class ProcessRequest implements Runnable {
                     }
                 }
             }
+
+            //remove object
+            GlobalObject.getInstance().getHashOrder().remove(bookRspTask.getOrder_id());
+        } else {
+            logger.info("[" + postLine + "]no transaction waiting for process");
         }
 
         logger.info("Finish do booking response in " + (System.currentTimeMillis() - sta) + " ms");
@@ -2193,6 +2199,13 @@ public class ProcessRequest implements Runnable {
         Gson gson = new Gson();
         String request = gson.toJson(paymentPaypalTask.birhChild());
         String response = client.createPayment(request);
+
+        if (response == null) {
+            PaymentClientResponse clientResp = new PaymentClientResponse(GlobalVariables.TRANSACTION_STATUS_FAIL.toLowerCase(), "The service is currently busy. Please choose another payment method.", new Data(paymentPaypalTask.getOrder_id()));
+            String respString = gson.toJson(clientResp);
+
+            sendResultToClient(s, respString);
+        }
         CreatePaymentResponse createResponse = gson.fromJson(response, CreatePaymentResponse.class);
 
         String id = createResponse.getId();
@@ -2396,7 +2409,8 @@ public class ProcessRequest implements Runnable {
             headers.put(Constants.PAYPAL_HEADER_TRANSMISSION_TIME, transmissionTime);
 
             //create context
-            APIContext context = new APIContext(ConfigLoader.getInstance().getPaypalClientID(), ConfigLoader.getInstance().getPaypalSecret(), "sandbox");
+//            APIContext context = new APIContext(ConfigLoader.getInstance().getPaypalClientID(), ConfigLoader.getInstance().getPaypalSecret(), "sandbox");
+            APIContext context = new APIContext(ConfigLoader.getInstance().getPaypalClientID(), ConfigLoader.getInstance().getPaypalSecret(), Constants.LIVE);
             context.addConfiguration(Constants.PAYPAL_WEBHOOK_ID, ConfigLoader.getInstance().getWebhookId());
 
             //validate header
@@ -2440,7 +2454,6 @@ public class ProcessRequest implements Runnable {
                             }
 
                         } else {
-
                             //comple --> notify booking paysuccess
                             Main.getInstance().getNotifyQueue().enqueue(orderID);
                             GlobalObject.getInstance().getHashPaypalExeLink().remove(parentID);
