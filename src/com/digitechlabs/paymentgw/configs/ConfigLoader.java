@@ -18,6 +18,8 @@ public class ConfigLoader extends ProcessThreadMX {
     private static ConfigLoader instance;
     long count = 0;
 
+    private long maxFunding = 10000; //10k AVA ~ 1k USD
+
     private String mainConfigFile = "payment.conf";
     private final String rapidQueueFile = "rabbit_queue.conf";
     private final String walletFile = "wallet_client.conf";
@@ -34,6 +36,9 @@ public class ConfigLoader extends ProcessThreadMX {
     private String queueName = "queue-booking-room";
     private String routingKey = "make_room_booking";
     private String brokerURI = "amqp://travala:travala%40123@localhost:5672/trav_vhost";
+
+    private String historyQueueWalletHost = "localhost";
+    private String historyQueueWalletName = "history-wallet-queue";
 
     private String walletURL;
     private String walletToken;
@@ -88,6 +93,8 @@ public class ConfigLoader extends ProcessThreadMX {
             this.queueName = prop.getProperty("queue.name").trim();
             this.routingKey = prop.getProperty("routing.key").trim();
             this.brokerURI = prop.getProperty("broker.uri").trim();
+            this.historyQueueWalletName = prop.getProperty("history.queue.wallet.name").trim();
+            this.historyQueueWalletHost = prop.getProperty("history.queue.wallet.host").trim();
 
             this.walletURL = prop.getProperty("wallet.url");
             this.walletToken = prop.getProperty("wallet.token");
@@ -300,6 +307,22 @@ public class ConfigLoader extends ProcessThreadMX {
 
     public String getNotifyBookFailPrivatekey() {
         return notifyBookFailPrivatekey;
+    }
+
+    public String getHistoryQueueWalletName() {
+        return historyQueueWalletName;
+    }
+
+    public String getHistoryQueueWalletHost() {
+        return historyQueueWalletHost;
+    }
+
+    public long getMaxFunding() {
+        return maxFunding;
+    }
+
+    public void setMaxFunding(long maxFunding) {
+        this.maxFunding = maxFunding;
     }
 
 }

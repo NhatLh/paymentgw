@@ -8,6 +8,7 @@ import com.digitechlabs.paymentgw.configs.MyLog;
 import com.digitechlabs.paymentgw.currency.SyncRateProcess;
 import com.digitechlabs.paymentgw.history.UpdateStatusProcess;
 import com.digitechlabs.paymentgw.paypal.token.GetTokenProcess;
+import com.digitechlabs.paymentgw.rabbitqueue.RabbitMQHisWalletSender;
 import com.digitechlabs.paymentgw.rabbitqueue.RabbitQueueProcess;
 import java.io.File;
 import java.io.IOException;
@@ -65,6 +66,7 @@ public class Main {
         processor.start();
 
         UpdateStatusProcess.getInstance().start();
+        RabbitMQHisWalletSender.getInstance().start();
     }
 
     public void stop() {
@@ -73,7 +75,8 @@ public class Main {
 
         processor.stop();
         SyncRateProcess.getInstance().stop();
-        GetTokenProcess.getInstance().start();
+        GetTokenProcess.getInstance().stop();
+        RabbitMQHisWalletSender.getInstance().stop();
     }
 
     public void loadConfig() {
