@@ -1,6 +1,7 @@
 package com.digitechlabs.paymentgw.soap;
 
 import com.digitechlabs.paymentgw.Object.UserWallet;
+import com.digitechlabs.paymentgw.coingate.CheckoutResp;
 import com.digitechlabs.paymentgw.coingate.CheckoutTask;
 import com.digitechlabs.paymentgw.ssl.RestFulClient;
 import com.google.gson.Gson;
@@ -16,6 +17,8 @@ import com.digitechlabs.paymentgw.restobject.OrderTask;
 import com.digitechlabs.paymentgw.restobject.PayTask;
 import com.digitechlabs.paymentgw.dbpooling.DBConnect;
 import com.digitechlabs.paymentgw.dbpooling.DbInterface;
+import com.digitechlabs.paymentgw.funding.FundingTask;
+//import com.digitechlabs.paymentgw.funding.Response;
 import com.digitechlabs.paymentgw.history.History;
 import com.digitechlabs.paymentgw.history.HistoryResponse;
 import com.digitechlabs.paymentgw.history.Meta;
@@ -35,6 +38,8 @@ import com.digitechlabs.paymentgw.paypal.refund.RefundResponse;
 import com.digitechlabs.paymentgw.paypal.request.ExecutePayment;
 import com.digitechlabs.paymentgw.paypal.request.response.CreatePaymentResponse;
 import com.digitechlabs.paymentgw.paypal.request.response.Link;
+import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletInsert;
+import com.digitechlabs.paymentgw.rabbitqueue.RabbitMQHisWalletSender;
 import com.digitechlabs.paymentgw.restobject.BookResponseTask;
 import com.digitechlabs.paymentgw.restobject.PayTaskWrapper;
 import com.digitechlabs.paymentgw.restobject.WithdrawRequestTask;
@@ -113,12 +118,14 @@ public class ProcessRequest implements Runnable {
     public static final int API_TYPE_CREATE_PAYMENT_PAYPAL = 10;
     public static final int API_TYPE_EXECUTE_PAYMENT_PAYPAL = 11;
     public static final int API_TYPE_PAYPAL_CALLBACK = 12;
+    public static final int API_TYPE_FUNDING = 13;
+
+    public static final String STATUS_SUCCESS = "Success";
+    public static final String STATUS_FAILED = "Failed";
 
     private final SimpleDateFormat sdf = new SimpleDateFormat("YYYY-MM-dd'T'HH:mm:ssXXX");
 
     private final SimpleDateFormat sdfHis = new SimpleDateFormat("yyyyMMdd");
-
-    private final GregorianCalendar c = new GregorianCalendar();
 
     private final Logger logger = Logger.getLogger(ProcessRequest.class);
 
@@ -345,9 +352,17 @@ public class ProcessRequest implements Runnable {
             logger.info("URL REQUEST:" + client.getUrl());
             String chkOutResp = client.checkOut(checkout.getPay_currency());
 
-            sendResultToClient(s, chkOutResp);
-            //insert history with status CREATED (order)
-            dbInf.insertOrderHist(checkout, "", "", "", GlobalVariables.COINGATE_STATUS_PENDING);
+            //parse to object
+            CheckoutResp rspObj = gson.fromJson(chkOutResp, CheckoutResp.class);
+            if (rspObj.getOrderId() != null && !rspObj.getOrderId().equalsIgnoreCase("")) {
+
+                sendResultToClient(s, chkOutResp);
+                //insert history with status CREATED (order)
+                dbInf.insertOrderHist(checkout, "", "", "", GlobalVariables.COINGATE_STATUS_PENDING);
+            } else {
+
+            }
+
 //            dbInf.insertHistory(checkout.getOrder_id(),
 //                    GlobalVariables.COINGATE_STATUS_PENDING,
 //                    Double.valueOf(checkout.getPrice_amount()), new Timestamp(System.currentTimeMillis()),
@@ -436,6 +451,7 @@ public class ProcessRequest implements Runnable {
                             GlobalVariables.TRANSACTION_STATUS_FAIL, payAmount,
                             new Timestamp(System.currentTimeMillis()), "", "", "PAY", payTask.getUser_id(),
                             new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID());
+
                     break;
 
                 case 0: //user not found with pay_currency
@@ -1069,6 +1085,10 @@ public class ProcessRequest implements Runnable {
                                         case "/payment/paypal/callback":
                                             doPaypalCallback(s, postLine, header);
                                             break;
+
+                                        case "/payment/funding":
+                                            doFunding(s, postLine, header);
+                                            break;
                                         default:
                                             sendError(s, "401", "invalid", "");
                                             break;
@@ -1309,8 +1329,7 @@ public class ProcessRequest implements Runnable {
     private OrderTask makeOrderTask(String input) {
         Gson json = new Gson();
 //        json.
-        OrderTask oTask = json.fromJson(input, OrderTask.class
-        );
+        OrderTask oTask = json.fromJson(input, OrderTask.class);
 
         return oTask;
     }
@@ -1391,6 +1410,13 @@ public class ProcessRequest implements Runnable {
         PaypalCallbackTask callback = json.fromJson(input, PaypalCallbackTask.class);
 
         return callback;
+    }
+
+    private FundingTask makeFungdingTask(String input) {
+        Gson json = new Gson();
+        FundingTask funding = json.fromJson(input, FundingTask.class);
+
+        return funding;
     }
 
     /**
@@ -1522,6 +1548,14 @@ public class ProcessRequest implements Runnable {
 //                                + "'" + callbackTask.getTransactions().get(0).getAmount().getCurrency() + "',"
 //                                + "'" + callbackTask.getTransactions().get(0).getDescription() + "') (" + (System.currentTimeMillis() - start) + " ms)");
                         return callbackTask;
+
+                    case API_TYPE_FUNDING:// pay with user internal wallet
+                        FundingTask funding = makeFungdingTask(body);
+//                        logger.info("Receive Request: '" + type + "': ("
+//                                + "'" + callbackTask.getTransactions().get(0).getAmount().getTotal() + "',"
+//                                + "'" + callbackTask.getTransactions().get(0).getAmount().getCurrency() + "',"
+//                                + "'" + callbackTask.getTransactions().get(0).getDescription() + "') (" + (System.currentTimeMillis() - start) + " ms)");
+                        return funding;
                     default:
                         return null;
                 }
@@ -2450,7 +2484,6 @@ public class ProcessRequest implements Runnable {
 
                                 RefundResponse refundRsp = gson.fromJson(refundResult, RefundResponse.class);
                                 dbInf.insertOrderHist(cpTask, "refund_" + refundRsp.getState(), null);
-
                             }
 
                         } else {
@@ -2498,4 +2531,147 @@ public class ProcessRequest implements Runnable {
 
         logger.info("finish do callback from paypal in " + (System.currentTimeMillis() - sta) + " ms");
     }
+
+    private void doFunding(Socket s, String postLine, Properties header) {
+
+        long star = System.currentTimeMillis();
+
+        //check token
+        String autho = header.getProperty("authorization");
+        if (autho == null) {
+            logger.info("Authorization header not found");
+            sendError(s, "401", "invalid", "0");
+            return;
+        } else {
+            String private_key = "private_key " + ConfigLoader.getInstance().getPrivateKey();
+
+            if (!autho.equals(private_key)) {
+                logger.info("Authorization header invalid:" + autho);
+                sendError(s, "401", "invalid", "0");
+                return;
+            }
+        }
+
+        Gson gson = new Gson();
+
+        logger.info("Starting resolve funding");
+        task = decodeParms(s, postLine, API_TYPE_FUNDING);
+        String transactionid = IDgenerator.getInstance().genID();
+        //resolve task
+        if (task instanceof FundingTask) {
+            try {
+                FundingTask fundingTask = (FundingTask) task;
+
+                String id = fundingTask.getId();
+                String userID = fundingTask.getUser_id();
+                String fund = fundingTask.getFund().trim();
+                String currency = fundingTask.getCurrency().toUpperCase();
+                String transaction_type = fundingTask.getTransaction_type().toUpperCase();
+                String reason = fundingTask.getReason();
+
+                if (userID.equals("") || fund.equals("") || currency.equals("") || transaction_type.equals("")) {
+                    logger.info("input is invalid --> please check");
+
+                    com.digitechlabs.paymentgw.funding.Response resp = new com.digitechlabs.paymentgw.funding.Response("fail", "invalid input, check your body request");
+                    sendResultToClient(s, gson.toJson(resp));
+
+                    return;
+                }
+
+                double amount;
+                try {
+                    amount = Double.parseDouble(fund);
+
+                    if (Math.abs(amount) > ConfigLoader.getInstance().getMaxFunding()) {
+                        //over max funding require.
+                        logger.info("funding amout over maximum --> expect < " + ConfigLoader.getInstance().getMaxFunding() + " actual:" + amount);
+                        com.digitechlabs.paymentgw.funding.Response resp = new com.digitechlabs.paymentgw.funding.Response("fail", "funding amount is too much");
+                        sendResultToClient(s, gson.toJson(resp));
+
+                        //insert db:
+                        dbInf.insertHistory(id, STATUS_FAILED, -1, new Timestamp(System.currentTimeMillis()),
+                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+
+                        return;
+                    }
+                } catch (Exception ex) {
+                    logger.error(ex.getMessage(), ex);
+                    com.digitechlabs.paymentgw.funding.Response resp = new com.digitechlabs.paymentgw.funding.Response("fail", "invalid format of fund");
+                    sendResultToClient(s, gson.toJson(resp));
+
+                    //insert db:
+                    dbInf.insertHistory(id, STATUS_FAILED, -1, new Timestamp(System.currentTimeMillis()),
+                            "", "", transaction_type, userID, null, currency, reason, transactionid);
+                    //end job
+                    return;
+                }
+
+                int result = dbInf.updateBalance(userID, currency, amount);
+                switch (result) {
+                    case 0: //success
+                        com.digitechlabs.paymentgw.funding.Response resp = new com.digitechlabs.paymentgw.funding.Response("true", "success");
+                        sendResultToClient(s, gson.toJson(resp));
+
+                        //insert db:
+                        dbInf.insertHistory(id, STATUS_SUCCESS, amount, new Timestamp(System.currentTimeMillis()),
+                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+                        break;
+                    case 1: //system error
+                        com.digitechlabs.paymentgw.funding.Response respError = new com.digitechlabs.paymentgw.funding.Response("fail", "system error");
+                        sendResultToClient(s, gson.toJson(respError));
+
+                        //insert db
+                        dbInf.insertHistory(id, STATUS_FAILED, amount, new Timestamp(System.currentTimeMillis()),
+                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+                        break;
+                    case -1: //user not found
+                        com.digitechlabs.paymentgw.funding.Response respUserNotFound = new com.digitechlabs.paymentgw.funding.Response("fail", "user not found");
+                        sendResultToClient(s, gson.toJson(respUserNotFound));
+
+                        //insert db
+                        dbInf.insertHistory(id, STATUS_FAILED, amount, new Timestamp(System.currentTimeMillis()),
+                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+
+                        break;
+                    default://do nothing
+                        break;
+                }
+            } catch (Exception ex) {
+                logger.error(ex.getMessage(), ex);
+
+                logger.info("input is invalid --> please check");
+
+                com.digitechlabs.paymentgw.funding.Response resp = new com.digitechlabs.paymentgw.funding.Response("fail", "invalid input, check your body request");
+                sendResultToClient(s, gson.toJson(resp));
+
+                return;
+            }
+        } else {
+            logger.error("isn't fungding task --> Please check");
+        }
+
+        logger.info("finish funding task in " + (System.currentTimeMillis() - star) + " ms");
+    }
+
+//    public HistoryWallet createHisWalletObject(String id, String status, double amount,
+//            Timestamp created_at, String from_address, String to_address,
+//            String transaction_type, String user_id, Timestamp expired_time, String currency, String order_id, String transaction_id) {
+//
+//        HistoryWallet hw = new HistoryWallet();
+//
+//        hw.setId(id);
+//        hw.setStatus(status);
+//        hw.setAmount(amount);
+//        hw.setCreated_at(created_at);
+//        hw.setFrom_address(from_address);
+//        hw.setTo_address(to_address);
+//        hw.setTransaction_type(transaction_type);
+//        hw.setUser_id(user_id);
+//        hw.setExpired_time(expired_time);
+//        hw.setCurrency(currency);
+//        hw.setOrder_id(order_id);
+//        hw.setTransaction_id(transaction_id);
+//
+//        return hw;
+//    }
 }

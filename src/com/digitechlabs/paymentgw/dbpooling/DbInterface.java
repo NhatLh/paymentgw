@@ -9,9 +9,13 @@ import com.digitechlabs.paymentgw.Object.UserWallet;
 import com.digitechlabs.paymentgw.coingate.CheckoutTask;
 import com.digitechlabs.paymentgw.currency.SyncRateProcess;
 import com.digitechlabs.paymentgw.history.History;
+import com.digitechlabs.paymentgw.history.HistoryRequest;
 import com.digitechlabs.paymentgw.history.WithdrawClientNotifyTask;
 import com.digitechlabs.paymentgw.orderdetails.OrderDetails;
 import com.digitechlabs.paymentgw.paypal.client.request.CreatePaymentTask;
+import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletInsert;
+import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletUpdate;
+import com.digitechlabs.paymentgw.rabbitqueue.RabbitMQHisWalletSender;
 import com.digitechlabs.paymentgw.restobject.CallbackTask;
 import com.digitechlabs.paymentgw.restobject.OrderTask;
 import com.digitechlabs.paymentgw.restobject.PayTask;
@@ -22,6 +26,7 @@ import com.digitechlabs.paymentgw.soap.ProcessRequest;
 import com.digitechlabs.paymentgw.utils.GlobalVariables;
 import com.digitechlabs.paymentgw.wallet.Deposit;
 import com.digitechlabs.paymentgw.wallet.Refund;
+import com.google.gson.Gson;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -45,6 +50,7 @@ public class DbInterface {
 
     Logger logger = Logger.getLogger(DbInterface.class);
     private final SimpleDateFormat sdf = new SimpleDateFormat("YYYY-MM-dd'T'HH:mm:ssXXX");
+    private Gson gson = new Gson();
 
     public DbInterface() {
     }
@@ -455,7 +461,36 @@ public class DbInterface {
             }
         }
 
+        //send message to queue
+        HistoryWalletInsert his = createHisWalletObject(id, status, amount, created_at, from_address, to_address, transaction_type, user_id, expired_time, currency, order_id, transaction_id);
         logger.info("[" + id + "]Finish Insert history in " + (System.currentTimeMillis() - start) + " ms");
+
+        HistoryRequest request = new HistoryRequest("insert", his, null);
+
+        String message = gson.toJson(request);
+        RabbitMQHisWalletSender.getInstance().enqueue(message);
+    }
+
+    public HistoryWalletInsert createHisWalletObject(String id, String status, double amount,
+            Timestamp created_at, String from_address, String to_address,
+            String transaction_type, String user_id, Timestamp expired_time, String currency, String order_id, String transaction_id) {
+
+        HistoryWalletInsert hw = new HistoryWalletInsert();
+
+        hw.setId(id);
+        hw.setStatus(status);
+        hw.setAmount(amount);
+        hw.setCreated_at(created_at);
+        hw.setFrom_address(from_address);
+        hw.setTo_address(to_address);
+        hw.setTransaction_type(transaction_type);
+        hw.setUser_id(user_id);
+        hw.setExpired_time(expired_time);
+        hw.setCurrency(currency);
+        hw.setOrder_id(order_id);
+        hw.setTransaction_id(transaction_id);
+
+        return hw;
     }
 
     public double[] checkLimit(WithdrawRequestTask task) {
@@ -961,6 +996,12 @@ public class DbInterface {
                 logger.info("[row:" + row + "]update id:" + id + ", to status:" + status + " fail");
             }
 
+            HistoryWalletUpdate his = new HistoryWalletUpdate(id, status, transType);
+            HistoryRequest request = new HistoryRequest("update", null, his);
+
+            String message = gson.toJson(request);
+            RabbitMQHisWalletSender.getInstance().enqueue(message);
+
             return 0;
         } catch (SQLException ex) {
             logger.error(ex.getMessage(), ex);
@@ -983,6 +1024,7 @@ public class DbInterface {
                 }
             }
         }
+
     }
 
     public int updateHisUserDeleted(String userID, String sqlInput) {
@@ -1048,13 +1090,19 @@ public class DbInterface {
 
             int row = pstm.executeUpdate();
 
-            if (row == 1) {
-                logger.info("update userid:" + user_id + ", with currency:" + currency + " , amount:" + amount + " success");
-            } else {
-                logger.info("[row:" + row + "]update userid:" + user_id + ", with currency:" + currency + " , amount:" + amount + " success");
+            if (row == 0) { //no row effected
+                logger.info("user id:" + user_id + " not found");
+                return -1;
             }
 
-            return 0;
+            if (row == 1) { //one row effected
+                logger.info("update userid:" + user_id + ", with currency:" + currency + " , amount:" + amount + " success");
+                return 0;
+            } else { //multi row effected
+                logger.info("[row:" + row + "]update userid:" + user_id + ", with currency:" + currency + " , amount:" + amount + " success");
+                return 0;
+            }
+
         } catch (SQLException ex) {
             logger.error(ex.getMessage(), ex);
             logger.error("update userid:" + user_id + ", with currency:" + currency + " , amount:" + amount + " FAIL --> Please Check");

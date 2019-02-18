@@ -371,9 +371,6 @@ public class RestFulClient {
     public String getPaypalToken() {
         long start = System.currentTimeMillis();
 
-//        for (int i = 0; i < values.length; i++) {
-//            logger.info("VALUE:" + values[i]);
-//        }
         logger.info("starting post ..." + ConfigLoader.getInstance().getPaypalUrlGetToken());
         Client client = null;
         String result = "";
@@ -384,12 +381,10 @@ public class RestFulClient {
             client.addFilter(authFilter);
 
             WebResource resource = client.resource(ConfigLoader.getInstance().getPaypalUrlGetToken());
-//            client.addFilter(new HTTPBasicAuthFilter(ConfigLoader.getInstance().getPaypalClientID(), ConfigLoader.getInstance().getPaypalSecret()));
-//            JSONObject request = makeJsonFromArray(GlobalVariables.GET_PAYPAL_TOKEN, new String[]{"client_credentials"});
+
             MultivaluedMap form = new MultivaluedMapImpl();
             form.add("grant_type", "client_credentials");
             ClientResponse response = resource.type("application/x-www-form-urlencoded")
-                    //                    .header(HttpHeaders.AUTHORIZATION, ConfigLoader.getInstance().getAppToken())
                     .header(HttpHeaders.ACCEPT, "application/json")
                     .header(HttpHeaders.ACCEPT_LANGUAGE, "en_US")
                     .header(HttpHeaders.CONTENT_TYPE, "application/x-www-form-urlencoded")
@@ -412,9 +407,6 @@ public class RestFulClient {
     public String reFund(String url) {
         long start = System.currentTimeMillis();
 
-//        for (int i = 0; i < values.length; i++) {
-//            logger.info("VALUE:" + values[i]);
-//        }
         logger.info("starting post ..." + url);
         Client client = null;
         String result = "";

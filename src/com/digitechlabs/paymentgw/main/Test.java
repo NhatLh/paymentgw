@@ -16,6 +16,13 @@ public class Test {
         System.out.println(stringID.toUpperCase());
 
         System.out.println(Character.MAX_RADIX);
+        
+        
+        int a = -1000;
+        
+        int b = Math.abs(a);
+                
+        System.out.println(b);
     }
 
     public static Map<String, List<String>> splitQuery(String uri) throws UnsupportedEncodingException {
