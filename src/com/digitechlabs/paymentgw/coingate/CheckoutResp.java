@@ -1,4 +1,3 @@
-
 package com.digitechlabs.paymentgw.coingate;
 
 import com.google.gson.annotations.Expose;
@@ -51,6 +50,8 @@ public class CheckoutResp {
     @SerializedName("payment_url")
     @Expose
     private String paymentUrl;
+
+    private String destination_tag;
 
     public Integer getId() {
         return id;
@@ -170,6 +171,14 @@ public class CheckoutResp {
 
     public void setPaymentUrl(String paymentUrl) {
         this.paymentUrl = paymentUrl;
+    }
+
+    public String getDestination_tag() {
+        return destination_tag;
+    }
+
+    public void setDestination_tag(String destination_tag) {
+        this.destination_tag = destination_tag;
     }
 
 }

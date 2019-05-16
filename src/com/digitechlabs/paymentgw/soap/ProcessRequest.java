@@ -1,6 +1,9 @@
 package com.digitechlabs.paymentgw.soap;
 
 import com.digitechlabs.paymentgw.Object.UserWallet;
+import com.digitechlabs.paymentgw.lockbalance.LockBalanceTask;
+import com.digitechlabs.paymentgw.lockbalance.LockResponse;
+import com.digitechlabs.paymentgw.lockbalance.UnLockBalanceTask;
 import com.digitechlabs.paymentgw.coingate.CheckoutResp;
 import com.digitechlabs.paymentgw.coingate.CheckoutTask;
 import com.digitechlabs.paymentgw.ssl.RestFulClient;
@@ -18,7 +21,6 @@ import com.digitechlabs.paymentgw.restobject.PayTask;
 import com.digitechlabs.paymentgw.dbpooling.DBConnect;
 import com.digitechlabs.paymentgw.dbpooling.DbInterface;
 import com.digitechlabs.paymentgw.funding.FundingTask;
-//import com.digitechlabs.paymentgw.funding.Response;
 import com.digitechlabs.paymentgw.history.History;
 import com.digitechlabs.paymentgw.history.HistoryResponse;
 import com.digitechlabs.paymentgw.history.Meta;
@@ -38,8 +40,6 @@ import com.digitechlabs.paymentgw.paypal.refund.RefundResponse;
 import com.digitechlabs.paymentgw.paypal.request.ExecutePayment;
 import com.digitechlabs.paymentgw.paypal.request.response.CreatePaymentResponse;
 import com.digitechlabs.paymentgw.paypal.request.response.Link;
-import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletInsert;
-import com.digitechlabs.paymentgw.rabbitqueue.RabbitMQHisWalletSender;
 import com.digitechlabs.paymentgw.restobject.BookResponseTask;
 import com.digitechlabs.paymentgw.restobject.PayTaskWrapper;
 import com.digitechlabs.paymentgw.restobject.WithdrawRequestTask;
@@ -48,13 +48,18 @@ import com.digitechlabs.paymentgw.revenue.Detail;
 import com.digitechlabs.paymentgw.revenue.Revenue;
 import com.digitechlabs.paymentgw.revenue.RevenueResponse;
 import com.digitechlabs.paymentgw.revenue.Wallet;
+import com.digitechlabs.paymentgw.soap.response.BaseError;
+import com.digitechlabs.paymentgw.soap.response.ResponseDTO;
 import com.digitechlabs.paymentgw.ssl.WithdrawResp;
 import com.digitechlabs.paymentgw.utils.GlobalObject;
 import com.digitechlabs.paymentgw.utils.GlobalVariables;
+import static com.digitechlabs.paymentgw.utils.GlobalVariables.TRANSACTION_TYPE_LOCK;
+import static com.digitechlabs.paymentgw.utils.GlobalVariables.TRANSACTION_TYPE_UNLOCK;
 import com.digitechlabs.paymentgw.utils.PaypalPayment;
+import com.digitechlabs.paymentgw.utils.UserBalance;
 import com.digitechlabs.paymentgw.wallet.Deposit;
 import com.digitechlabs.paymentgw.wallet.NEP5Transfer;
-import com.digitechlabs.paymentgw.wallet.Refund;
+import com.digitechlabs.paymentgw.wallet.TransInfo;
 import com.digitechlabs.paymentgw.wallet.WithDraw;
 import com.digitechlabs.paymentgw.websocket.Notify;
 import com.paypal.api.payments.Event;
@@ -85,7 +90,6 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Enumeration;
-import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -119,6 +123,8 @@ public class ProcessRequest implements Runnable {
     public static final int API_TYPE_EXECUTE_PAYMENT_PAYPAL = 11;
     public static final int API_TYPE_PAYPAL_CALLBACK = 12;
     public static final int API_TYPE_FUNDING = 13;
+    public static final int API_TYPE_BLOCKBALANCE = 14;
+    public static final int API_TYPE_UNBLOCKBALANCE = 15;
 
     public static final String STATUS_SUCCESS = "Success";
     public static final String STATUS_FAILED = "Failed";
@@ -187,7 +193,7 @@ public class ProcessRequest implements Runnable {
      * enough, 2 - success
      */
     private int pay(String userID, String currency, double payAmount, String orderID) {
-        String sql = GlobalVariables.SQL_SELECT_USERID_FOR_UPDATE;
+        String sql = GlobalVariables.SQL_SELECT_USERID_FOR_UPDATE_BALANCE;
         Connection conn = null;
         PreparedStatement pstm = null;
         ResultSet rs = null;
@@ -303,7 +309,7 @@ public class ProcessRequest implements Runnable {
     private boolean isAcceptConfirming(String currency) {
         String[] arr = ConfigLoader.getInstance().getAcceptConfirming();
         for (String cur : arr) {
-            if (cur.equalsIgnoreCase(currency)) {
+            if (cur.equalsIgnoreCase(currency) || cur.equalsIgnoreCase("ALL")) {
                 return true;
             }
         }
@@ -356,7 +362,24 @@ public class ProcessRequest implements Runnable {
             CheckoutResp rspObj = gson.fromJson(chkOutResp, CheckoutResp.class);
             if (rspObj.getOrderId() != null && !rspObj.getOrderId().equalsIgnoreCase("")) {
 
-                sendResultToClient(s, chkOutResp);
+                if (rspObj.getPaymentAddress().contains("?dt=")) {
+                    String[] arr = rspObj.getPaymentAddress().split("\\?dt=");
+                    if (arr.length == 2) {
+                        String address = arr[0];
+
+                        logger.info("address:" + address);
+
+                        String destTag = arr[1];
+                        logger.info("destination_tag:" + destTag);
+
+                        rspObj.setPaymentAddress(address);
+                        rspObj.setDestination_tag(destTag);
+                    } else {
+                        logger.info("maybe wrong payment address --> please check");
+                    }
+                }
+
+                sendResultToClient(s, gson.toJson(rspObj));
                 //insert history with status CREATED (order)
                 dbInf.insertOrderHist(checkout, "", "", "", GlobalVariables.COINGATE_STATUS_PENDING);
             } else {
@@ -376,54 +399,62 @@ public class ProcessRequest implements Runnable {
         task = decodeParms(s, postLine, API_TYPE_CALLBACK);
         CallbackTask callback = (CallbackTask) task;
         //response http code 200 to notify
-        sendResponse(s, HttpResponse.HTTP_OK, "application/json", null, null);
+//        sendResponse(s, HttpResponse.HTTP_OK, "application/json", null, null);
         logger.info("Receive Callback:" + postLine);
-        double recvAmount = Double.valueOf(callback.getReceive_amount());
+        Double recvAmount = Double.valueOf(callback.getReceive_amount());
         //insert DB callback transaction.
         String json = createJsonRevenue(recvAmount, callback.getReceive_currency().toUpperCase());
-        dbInf.insertOrderHist(callback, "", json);
+        int rsCheck = dbInf.checkCallback(callback.getOrder_id(), callback.getStatus());
 
-        boolean isAcceptConfirming = isAcceptConfirming(callback.getPay_currency());
-
-        if (isAcceptConfirming) {
-
-            //check status of transaction
-            if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_PAID)
-                    || GlobalVariables.COINGATE_STATUS_CONFIRMING.equalsIgnoreCase(callback.getStatus())) {
-//                client.setUrl(ConfigLoader.getInstance().getServiceUrl());
-
-                //enqueue or rest client
-                Main.getInstance().getNotifyQueue().enqueue(callback.getOrder_id());
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, "BOOKING");
-
-//                client.notifyService(callback);
+        if (rsCheck != -1) {//check success
+            sendResponse(s, HttpResponse.HTTP_OK, "application/json", null, null);
+            if (rsCheck == 1) {//duplicate found
+                logger.info("found duplicate transaction --> return success to coingate and ignore callback");
+                return;
             }
-//            else if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_EXPIRED)) {
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_EXPIRED, "BOOKING");
-//            } else if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_CANCELED)) {
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_CANCEL, "BOOKING");
-//            }
-        } else {
-            //check status of transaction
-            if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_PAID)) {
-//                client.setUrl(ConfigLoader.getInstance().getServiceUrl());
+            //callback event accepted
 
-                //enqueue or rest client
-                Main.getInstance().getNotifyQueue().enqueue(callback.getOrder_id());
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, "BOOKING");
-//                client.notifyService(callback);
+            dbInf.insertOrderHist(callback, "", json);
+
+            boolean isAcceptConfirming = isAcceptConfirming(callback.getPay_currency());
+
+            if (isAcceptConfirming) {
+
+                //check status of transaction
+                if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_PAID)
+                        || GlobalVariables.COINGATE_STATUS_CONFIRMING.equalsIgnoreCase(callback.getStatus())) {
+
+                    //check
+                    int x = dbInf.checkPaidNotify(callback.getOrder_id());
+                    if (x != 1) { //notify include not found and check db exception
+                        //insert his
+                        dbInf.insertPaidNotifyHis(callback.getOrder_id(), GlobalVariables.PAY_COINGATE, callback.getStatus());
+                        //enqueue or rest client
+                        Main.getInstance().getNotifyQueue().enqueue(callback.getOrder_id());
+                    }
+                }
+            } else {
+                //check status of transaction
+                if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_PAID)) {
+
+                    //check
+                    int x = dbInf.checkPaidNotify(callback.getOrder_id());
+                    if (x != 1) { //notify include not found and check db exception
+
+                        //insert his
+                        dbInf.insertPaidNotifyHis(callback.getOrder_id(), GlobalVariables.PAY_COINGATE, callback.getStatus());
+
+                        //enqueue or rest client
+                        Main.getInstance().getNotifyQueue().enqueue(callback.getOrder_id());
+                    }
+                }
             }
-//            else if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_EXPIRED)) {
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_EXPIRED, "BOOKING");
-//            } else if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_CANCELED)) {
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_CANCEL, "BOOKING");
-//            }
-//            else if (callback.getStatus().equalsIgnoreCase(GlobalVariables.COINGATE_STATUS_CONFIRMING)) {
-//                dbInf.updateStatusHistory(callback.getOrder_id(), GlobalVariables.TRANSACTION_STATUS_PENDING);
-//            }
+
+            logger.info("[" + callback.getOrder_id() + "]finish process callback in " + (System.currentTimeMillis() - sta) + " ms");
+        } else {//system error
+            //system error --> do not response to wait for coingate retry.
+            logger.info("system error --> ignore callback");
         }
-
-        logger.info("[" + callback.getOrder_id() + "]finish process callback in " + (System.currentTimeMillis() - sta) + " ms");
     }
 
     /**
@@ -450,7 +481,7 @@ public class ProcessRequest implements Runnable {
                     dbInf.insertHistory(payTask.getBooking_number(),
                             GlobalVariables.TRANSACTION_STATUS_FAIL, payAmount,
                             new Timestamp(System.currentTimeMillis()), "", "", "PAY", payTask.getUser_id(),
-                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID());
+                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID(), 1, null);
 
                     break;
 
@@ -461,7 +492,7 @@ public class ProcessRequest implements Runnable {
                     dbInf.insertHistory(payTask.getBooking_number(),
                             GlobalVariables.TRANSACTION_STATUS_FAIL, payAmount,
                             new Timestamp(System.currentTimeMillis()), "", "", "PAY", payTask.getUser_id(),
-                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID());
+                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID(), 1, null);
                     break;
 
                 case 1: // pay fail: balance is not enough
@@ -471,7 +502,7 @@ public class ProcessRequest implements Runnable {
                     dbInf.insertHistory(payTask.getBooking_number(),
                             GlobalVariables.TRANSACTION_STATUS_FAIL, payAmount,
                             new Timestamp(System.currentTimeMillis()), "", "", "PAY", payTask.getUser_id(),
-                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID());
+                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID(), 1, null);
                     break;
 
                 case 2: // pay success
@@ -482,16 +513,24 @@ public class ProcessRequest implements Runnable {
 
                     String transID = IDgenerator.getInstance().genID();
                     dbInf.insertHistory(payTask.getBooking_number(),
-                            GlobalVariables.TRANSACTION_STATUS_PENDING, payAmount,
+                            GlobalVariables.TRANSACTION_STATUS_SUCCESS, payAmount,
                             new Timestamp(System.currentTimeMillis()), "", "", "PAY", payTask.getUser_id(),
-                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), transID);
+                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), transID, 1, null);
 
                     //push to map
                     PayTaskWrapper wrapper = new PayTaskWrapper(payTask, transID);
                     GlobalObject.getInstance().getHashOrder().put(payTask.getOrder_id(), wrapper);
-                    //enqueue
-                    Main.getInstance().getNotifyQueue().enqueue(payTask.getOrder_id());
 
+                    //check
+                    int x = dbInf.checkPaidNotify(payTask.getOrder_id());
+                    if (x != 1) { //notify include not found and check db exception
+
+                        //insert his
+                        dbInf.insertPaidNotifyHis(payTask.getOrder_id(), GlobalVariables.PAY_WALLET, GlobalVariables.TRANSACTION_STATUS_SUCCESS);
+                        //enqueue
+                        Main.getInstance().getNotifyQueue().enqueue(payTask.getOrder_id());
+
+                    }
                     break;
 
                 default: //unknow error
@@ -501,7 +540,7 @@ public class ProcessRequest implements Runnable {
                     dbInf.insertHistory(payTask.getBooking_number(),
                             GlobalVariables.TRANSACTION_STATUS_FAIL, payAmount,
                             new Timestamp(System.currentTimeMillis()), "", "", "PAY", payTask.getUser_id(),
-                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID());
+                            new Timestamp(System.currentTimeMillis()), payTask.getPay_currency(), payTask.getOrder_id(), IDgenerator.getInstance().genID(), 1, null);
                     break;
             }
         } catch (NumberFormatException ex) {
@@ -510,6 +549,180 @@ public class ProcessRequest implements Runnable {
         }
 
         MyLog.Infor("[" + payTask.getOrder_id() + "] Finish ProcessRequest (" + (System.currentTimeMillis() - sta) + " ms)");
+    }
+
+    private void doLockBalance(Socket s, String postLine) {
+        long sta = System.currentTimeMillis();
+        Gson gson = new Gson();
+        task = decodeParms(s, postLine, API_TYPE_BLOCKBALANCE);
+
+        LockBalanceTask block = (LockBalanceTask) task;
+        try {
+            Double blockAmount = Double.valueOf(block.getBlock_amount());
+
+            //check negative
+            if (blockAmount <= 0) {
+                logger.info("block amount must be positive:" + blockAmount);
+
+                LockResponse resp = new LockResponse(false, "block amount must be positive:" + blockAmount);
+                sendResultToClient(s, gson.toJson(resp));
+            }
+
+            int blockResult = dbInf.blockBalane(block.getUser_id(), block.getBlock_currency(), blockAmount, block.getId());
+
+            switch (blockResult) {
+                case -1: //system error
+                    LockResponse resp_ = new LockResponse(false, "System Error");
+
+                    String message = gson.toJson(new ResponseDTO(resp_));
+                    sendResultToClient(s, message);
+
+                    dbInf.insertHistory(block.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, blockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_LOCK, block.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), block.getBlock_currency(), "",
+                            IDgenerator.getInstance().genID(), 4, block.getBlock_reason());
+                    break;
+
+                case 0: //user not found with block_currency
+                    LockResponse resp_0 = new LockResponse(false, "user_id:" + block.getUser_id() + " with block_currency:" + block.getBlock_currency() + " is not found");
+
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp_0)));
+
+                    dbInf.insertHistory(block.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, blockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_LOCK, block.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), block.getBlock_currency(), "", IDgenerator.getInstance().genID(), 4, block.getBlock_reason());
+                    break;
+
+                case 1: // block fail: balance is not enough
+                    LockResponse resp_1 = new LockResponse(false, "user_id:" + block.getUser_id() + " balance " + block.getBlock_currency() + " is not enough");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp_1)));
+
+                    dbInf.insertHistory(block.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, blockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_LOCK, block.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), block.getBlock_currency(), "", IDgenerator.getInstance().genID(), 4, block.getBlock_reason());
+                    break;
+
+                case 2: // block success
+                    LockResponse resp_2 = new LockResponse(true, "block successfully");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp_2)));
+
+                    String transID = IDgenerator.getInstance().genID();
+                    dbInf.insertHistory(block.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_SUCCESS, blockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_LOCK, block.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), block.getBlock_currency(), "", transID, 4, block.getBlock_reason());
+
+                    notify(block.getUser_id());
+
+                    break;
+
+                default: //unknow error
+                    LockResponse resp = new LockResponse(false, "unkown");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp)));
+
+                    dbInf.insertHistory(block.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, blockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_LOCK, block.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), block.getBlock_currency(), "", IDgenerator.getInstance().genID(), 4, block.getBlock_reason());
+                    break;
+            }
+        } catch (NumberFormatException ex) {
+            logger.error("[" + block.getId() + "] Invalid block_amount: " + block.getBlock_amount(), ex);
+            LockResponse resp = new LockResponse(false, "invalid block_amount:" + block.getBlock_amount());
+            sendResultToClient(s, gson.toJson(resp));
+        }
+
+        MyLog.Infor("[" + block.getId() + "] Finish ProcessRequest (" + (System.currentTimeMillis() - sta) + " ms)");
+    }
+
+    private void doUnLockBalance(Socket s, String postLine) {
+        long sta = System.currentTimeMillis();
+        Gson gson = new Gson();
+        task = decodeParms(s, postLine, API_TYPE_UNBLOCKBALANCE);
+
+        UnLockBalanceTask unBlock = (UnLockBalanceTask) task;
+        try {
+            Double unBlockAmount = Double.valueOf(unBlock.getBlock_amount());
+
+            //check negative
+            if (unBlockAmount <= 0) {
+                logger.info("unBlock amount must be positive:" + unBlockAmount);
+
+                LockResponse resp = new LockResponse(false, "unblock amount must be positive:" + unBlockAmount);
+                sendResultToClient(s, gson.toJson(resp));
+            }
+
+            int unBlockResult = dbInf.unblockBalane(unBlock.getUser_id(), unBlock.getBlock_currency(), unBlockAmount, unBlock.getId());
+
+            switch (unBlockResult) {
+                case -1: //system error
+                    LockResponse resp_ = new LockResponse(false, "System Error");
+
+                    String message = gson.toJson(new ResponseDTO(resp_));
+                    sendResultToClient(s, message);
+
+                    dbInf.insertHistory(unBlock.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, unBlockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_UNLOCK, unBlock.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), unBlock.getBlock_currency(), "",
+                            IDgenerator.getInstance().genID(), 4, unBlock.getBlock_reason());
+
+                    break;
+
+                case 0: //user not found with unBlock_currency
+                    LockResponse resp_0 = new LockResponse(false, "user_id:" + unBlock.getUser_id() + " with block_currency:" + unBlock.getBlock_currency() + " is not found");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp_0)));
+
+                    dbInf.insertHistory(unBlock.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, unBlockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_UNLOCK, unBlock.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), unBlock.getBlock_currency(), "", IDgenerator.getInstance().genID(), 4, unBlock.getBlock_reason());
+                    break;
+
+                case 1: // unblock fail: blocked is not enough
+                    LockResponse resp_1 = new LockResponse(false, "user_id:" + unBlock.getUser_id() + " blocked " + unBlock.getBlock_currency() + " is not enough");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp_1)));
+
+                    dbInf.insertHistory(unBlock.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, unBlockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_UNLOCK, unBlock.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), unBlock.getBlock_currency(), "", IDgenerator.getInstance().genID(), 4, unBlock.getBlock_reason());
+                    break;
+
+                case 2: // unBlock success
+                    LockResponse resp_2 = new LockResponse(true, "unblock successfully");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp_2)));
+
+                    String transID = IDgenerator.getInstance().genID();
+                    dbInf.insertHistory(unBlock.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_SUCCESS, unBlockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_UNLOCK, unBlock.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), unBlock.getBlock_currency(), "", transID, 4, unBlock.getBlock_reason());
+
+                    notify(unBlock.getUser_id());
+                    break;
+
+                default: //unknow error
+                    LockResponse resp = new LockResponse(false, "unkown");
+                    sendResultToClient(s, gson.toJson(new ResponseDTO(resp)));
+
+                    dbInf.insertHistory(unBlock.getId(),
+                            GlobalVariables.TRANSACTION_STATUS_FAIL, unBlockAmount,
+                            new Timestamp(System.currentTimeMillis()), "", "", TRANSACTION_TYPE_UNLOCK, unBlock.getUser_id(),
+                            new Timestamp(System.currentTimeMillis()), unBlock.getBlock_currency(), "", IDgenerator.getInstance().genID(), 4, unBlock.getBlock_reason());
+                    break;
+            }
+        } catch (NumberFormatException ex) {
+            logger.error("[" + unBlock.getId() + "] Invalid block_amount: " + unBlock.getBlock_amount(), ex);
+
+            LockResponse resp = new LockResponse(false, "invalid unblock_amount:" + unBlock.getBlock_amount());
+            sendResultToClient(s, gson.toJson(new ResponseDTO(resp)));
+        }
+
+        MyLog.Infor("[" + unBlock.getId() + "] Finish ProcessRequest (" + (System.currentTimeMillis() - sta) + " ms)");
     }
 
     private String createJsonWallet(double amount) {
@@ -524,12 +737,12 @@ public class ProcessRequest implements Runnable {
 
     }
 
-    private String createJsonRevenue(double amount, String currency) {
+    private String createJsonRevenue(Double amount, String currency) {
 
-        double AVA = amount / SyncRateProcess.getInstance().getRate(currency);
+        Double AVA = amount / SyncRateProcess.getInstance().getRate(currency);
 
-        double USD = AVA * SyncRateProcess.getInstance().getRate(GlobalVariables.CURRENCY_USD);
-        double EUR = AVA * SyncRateProcess.getInstance().getRate(GlobalVariables.CURRENCY_EUR);
+        Double USD = AVA * SyncRateProcess.getInstance().getRate(GlobalVariables.CURRENCY_USD);
+        Double EUR = AVA * SyncRateProcess.getInstance().getRate(GlobalVariables.CURRENCY_EUR);
 
         logger.info("input:" + amount + " --> " + currency);
         logger.info("output:" + AVA + ":" + USD + ":" + EUR);
@@ -542,27 +755,44 @@ public class ProcessRequest implements Runnable {
 
     }
 
-    private boolean notify(String userID) {
+    private void notify(String userID) {
         //send socket update
         int userid = Integer.valueOf(userID);
         String email = dbInf.getEmail(userid);
         UserWallet uw = dbInf.getUserWallet(userid);
         float balance = uw.getBalance();
 
-        {
+        boolean result;
+
+        for (int i = 0; i < 3; i++) {
+            result = sendNotify(email, userid, uw.getWallet_add(), balance);
+
+            if (result) {
+                break;
+            }
+
             try {
-                not.sendMessageToSocket(email, userid, uw.getWallet_add(), balance);
-                return true;
-            } catch (URISyntaxException ex) {
-                logger.error(ex.getMessage(), ex);
-                return false;
+                Thread.sleep(100);
             } catch (InterruptedException ex) {
                 logger.error(ex.getMessage(), ex);
-                return false;
-            } catch (Exception ex) {
-                logger.error(ex.getMessage(), ex);
-                return false;
             }
+        }
+
+    }
+
+    private boolean sendNotify(String email, int userid, String walletAdress, float balance) {
+        try {
+            not.sendMessageToSocket(email, userid, walletAdress, balance);
+            return true;
+        } catch (URISyntaxException ex) {
+            logger.error(ex.getMessage(), ex);
+            return false;
+        } catch (InterruptedException ex) {
+            logger.error(ex.getMessage(), ex);
+            return false;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage(), ex);
+            return false;
         }
     }
 
@@ -633,27 +863,23 @@ public class ProcessRequest implements Runnable {
                     dbInf.updateBalance(curency, amount, address);
                     dbInf.insertDepositHis(dTask, userID, nep5.getFrom_address());
                     dbInf.insertHistory(dTask.getData().getTxid(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, amount, new Timestamp(System.currentTimeMillis()),
-                            nep5.getFrom_address(), address, "DEPOSIT", userID, null, curency,
-                            null, IDgenerator.getInstance().genID());
+                            nep5.getFrom_address(), address, "DEPOSIT", userID, null, curency.toUpperCase(),
+                            null, IDgenerator.getInstance().genID(), 5, null);
 
                     //notify socket
                     //notify update balance
-                    boolean rs;
-                    for (int i = 0; i < 3; i++) {
-                        rs = notify(userID);
+                    notify(userID);
+//                    boolean rs;
+//                    for (int i = 0; i < 3; i++) {
+//                        rs = notify(userID);
+//                        
+//                        if (rs) {
+//                            break;
+//                        }
+//                        
+//                        Thread.sleep(100);
+//                    }
 
-                        if (rs) {
-                            break;
-                        }
-                    }
-
-                    for (int i = 0; i < 3; i++) {
-                        rs = notify(userID);
-
-                        if (rs) {
-                            break;
-                        }
-                    }
                 } catch (Exception e) {
                     logger.error("invalid amount:" + dTask.getData().getAmount() + " -->" + e.getMessage(), e);
                 }
@@ -721,21 +947,22 @@ public class ProcessRequest implements Runnable {
             case 0: // address and currency valid
 
                 String status = wdTask.getEvent();
-                switch (status.toLowerCase()) {
-                    case "completed": //withdraw success
-                        dbInf.insertWithdrawHis("", wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
-                        logger.info("Withdraw transaction " + transactionID + " --> success");
-                        dbInf.updateStatusHistory(requestsID, GlobalVariables.TRANSACTION_STATUS_SUCCESS, "WITHDRAW");
-                        break;
-                    case "failed": //withdraw fail --> refund
-                        logger.info("Withdraw transaction " + transactionID + ": fail --> refund transaction");
-                        dbInf.insertWithdrawHis("", wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
-                        //refund
-                        Refund refund = dbInf.getRefund(transactionID);
+                TransInfo transInfo = dbInf.getTransInfo(transactionID);
+                if (transInfo != null) {
+                    switch (status.toLowerCase()) {
+                        case "completed": //withdraw success
+                            dbInf.insertWithdrawHis(transInfo.getUser_id(), wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
+                            logger.info("Withdraw transaction " + transactionID + " --> success");
+                            dbInf.updateStatusHistory(requestsID, GlobalVariables.TRANSACTION_STATUS_SUCCESS, "WITHDRAW");
+                            break;
+                        case "failed": //withdraw fail --> refund
+                            logger.info("Withdraw transaction " + transactionID + ": fail --> refund transaction");
+                            dbInf.insertWithdrawHis(transInfo.getUser_id(), wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
+                            //refund
+//                        TransInfo refund = dbInf.getTransInfo(transactionID);
 
-                        if (refund != null) {
-                            dbInf.updateBalance(refund.getUser_id(), wdTask.getData().getCurrency(), refund.getAmount());
-                            logger.info("[" + refund.getUser_id() + "]" + "refund success");
+                            dbInf.updateBalance(transInfo.getUser_id(), wdTask.getData().getCurrency(), transInfo.getAmount());
+                            logger.info("[" + transInfo.getUser_id() + "]" + "refund success");
 
                             String transID = dbInf.getHisTransID(wdTask.getData().getTxid(), "WITHDRAW");
 
@@ -743,18 +970,18 @@ public class ProcessRequest implements Runnable {
                             dbInf.insertHistory(wdTask.getData().getTxid(), GlobalVariables.TRANSACTION_STATUS_SUCCESS,
                                     Double.valueOf(wdTask.getData().getAmount()),
                                     new Timestamp(System.currentTimeMillis()), "", "",
-                                    "REFUND", refund.getUser_id(), null, wdTask.getData().getCurrency(),
-                                    transID, IDgenerator.getInstance().genID());
-                        } else {
-                            logger.info("[" + checkID + "]" + "fail to get info refund");
-                        }
-                        dbInf.updateStatusHistory(requestsID, GlobalVariables.TRANSACTION_STATUS_FAIL, "WITHDRAW");
+                                    "REFUND", transInfo.getUser_id(), null, wdTask.getData().getCurrency(),
+                                    transID, IDgenerator.getInstance().genID(), 2, null);
+                            dbInf.updateStatusHistory(requestsID, GlobalVariables.TRANSACTION_STATUS_FAIL, "WITHDRAW");
 
-                        break;
-                    default: //dont know event
-                        logger.info("Withdraw transaction " + transactionID + " --> don't know event");
-                        dbInf.insertWithdrawHis("", wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
-                        break;
+                            break;
+                        default: //dont know event
+                            logger.info("Withdraw transaction " + transactionID + " --> don't know event");
+                            dbInf.insertWithdrawHis("", wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
+                            break;
+                    }
+                } else {
+                    logger.info("[" + checkID + "]" + "fail to get info with transaction id:" + transactionID);
                 }
 
                 break;
@@ -845,7 +1072,7 @@ public class ProcessRequest implements Runnable {
                             logger.info("going to insert history for deposit transaction");
                             dbInf.insertHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, Double.valueOf(wdTask.getAmount()),
                                     new Timestamp(System.currentTimeMillis()), from_add, wdTask.getTo_address(),
-                                    "DEPOSIT", userID, null, wdTask.getCurrency(), null, IDgenerator.getInstance().genID());
+                                    "DEPOSIT", userID, null, wdTask.getCurrency(), null, IDgenerator.getInstance().genID(), 5, null);
 
                             //update status
                             logger.info("going to update status of transaction");
@@ -857,22 +1084,20 @@ public class ProcessRequest implements Runnable {
                                     wdTask.getTo_address(), wdTask.getMax_per_day(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, transaction_id, wdTask.getRequest_id());
 
                             //notify update balance
-                            boolean rs;
-                            for (int i = 0; i < 3; i++) {
-                                rs = notify(wdTask.getUser_id());
+//                            boolean rs;
+                            notify(wdTask.getUser_id());
+//                            for (int i = 0; i < 3; i++) {
 
-                                if (rs) {
-                                    break;
-                                }
-                            }
-
-                            for (int i = 0; i < 3; i++) {
-                                rs = notify(userID);
-
-                                if (rs) {
-                                    break;
-                                }
-                            }
+//                                if (rs) {
+//                                    break;
+//                                }
+//
+//                                try {
+//                                    Thread.sleep(100);
+//                                } catch (InterruptedException ex) {
+//                                    java.util.logging.Logger.getLogger(ProcessRequest.class.getName()).log(Level.SEVERE, null, ex);
+//                                }
+//                            }
                         } else if (userID != null && userID.isEmpty()) { //send request withdraw
                             logger.info("[" + wdTask.getUser_id() + "]send request withdraw to address:" + wdTask.getTo_address());
                             client.setUrl(ConfigLoader.getInstance().getWalletURL() + "withdrawals");
@@ -890,7 +1115,7 @@ public class ProcessRequest implements Runnable {
                                         //insert history refund
                                         dbInf.insertHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, Double.valueOf(wdTask.getAmount()),
                                                 new Timestamp(System.currentTimeMillis()), "", from_add,
-                                                "REFUND", wdTask.getUser_id(), null, wdTask.getCurrency(), transactionID, IDgenerator.getInstance().genID());
+                                                "REFUND", wdTask.getUser_id(), null, wdTask.getCurrency(), transactionID, IDgenerator.getInstance().genID(), 2, null);
 
                                         logger.info("[" + wdTask.getUser_id() + "]refund success:" + wdTask.getAmount());
                                         dbInf.updateStatusHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL, "WITHDRAW");
@@ -917,7 +1142,7 @@ public class ProcessRequest implements Runnable {
                                     //insert history refund
                                     dbInf.insertHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, Double.valueOf(wdTask.getAmount()),
                                             new Timestamp(System.currentTimeMillis()), "", from_add,
-                                            "REFUND", wdTask.getUser_id(), null, wdTask.getCurrency(), transactionID, IDgenerator.getInstance().genID());
+                                            "REFUND", wdTask.getUser_id(), null, wdTask.getCurrency(), transactionID, IDgenerator.getInstance().genID(), 2, null);
 
                                     logger.info("[" + wdTask.getUser_id() + "]refund success:" + wdTask.getAmount());
                                     dbInf.updateStatusHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL, "WITHDRAW");
@@ -1022,6 +1247,8 @@ public class ProcessRequest implements Runnable {
                                 ipRequest = header.getProperty("x-forwarded-for", "");
                                 contentLength = Long.valueOf(header.getProperty("content-length", "0"));
 
+                                logger.info("Request content length = " + contentLength);
+
                                 if (!"".equalsIgnoreCase(ipRequest)) {
                                     ipClient = ipRequest;
                                 }
@@ -1089,6 +1316,14 @@ public class ProcessRequest implements Runnable {
                                         case "/payment/funding":
                                             doFunding(s, postLine, header);
                                             break;
+
+                                        case "/payment/lock-balance": //block apart balance
+                                            doLockBalance(s, postLine);
+                                            break;
+
+                                        case "/payment/unlock-balance": //unblock apart balance
+                                            doUnLockBalance(s, postLine);
+                                            break;
                                         default:
                                             sendError(s, "401", "invalid", "");
                                             break;
@@ -1117,7 +1352,6 @@ public class ProcessRequest implements Runnable {
                                                 doHistory(s, values, userID);
                                             }
                                         }
-
                                     } else if (uri.startsWith("/payment/user-delete")) {
                                         Map<String, List<String>> values = splitQuery(uri);
                                         sendError(s, "200", "OK", "0");
@@ -1145,7 +1379,34 @@ public class ProcessRequest implements Runnable {
                                                 return;
                                             }
                                         }
+                                    } else if (uri.startsWith("/payment/check-balance")) {
 
+//                                        Map<String, List<String>> values = splitQuery(uri);
+//                                        String userId = values.get("userid").get(0);
+//                                        doCheckBalance(s, userId);
+                                        String autho = header.getProperty("authorization");
+                                        if (autho == null) {
+                                            logger.info("Authorization header not found");
+                                            sendError(s, "401", "invalid", "0");
+                                            return;
+                                        } else {
+                                            autho = autho.replace("Bearer ", "");
+
+//                                            logger.info("token:" + autho);
+//                                            String userID = Decrypter.getInstance().decryptToken(autho);
+                                            String private_key = "private_key " + ConfigLoader.getInstance().getPrivateKey();
+                                            if (!autho.equals(private_key)) {
+                                                logger.info("Authorization header invalid");
+                                                sendError(s, "401", "invalid", "0");
+                                                return;
+                                            } else {
+//                                                logger.info("User ID = " + userID);
+                                                Map<String, List<String>> values = splitQuery(uri);
+                                                String userId = values.get("user_id").get(0);
+                                                doCheckBalance(s, userId);
+                                            }
+                                        }
+//                                        doCheckBalance(s, "327");
                                     } else {
                                         sendError(s, "200", "OK", "0");
                                     }
@@ -1186,6 +1447,9 @@ public class ProcessRequest implements Runnable {
         }
     }
 
+//    private boolean verifyUserToken(){
+//        
+//    }
     private Map<String, List<String>> splitQuery(String uri) throws UnsupportedEncodingException {
         if (uri.contains("?")) {
             uri = uri.split("\\?")[1];
@@ -1419,6 +1683,20 @@ public class ProcessRequest implements Runnable {
         return funding;
     }
 
+    private LockBalanceTask makeBlockingTask(String input) {
+        Gson json = new Gson();
+        LockBalanceTask blocking = json.fromJson(input, LockBalanceTask.class);
+
+        return blocking;
+    }
+
+    private UnLockBalanceTask makeUnBlockingTask(String input) {
+        Gson json = new Gson();
+        UnLockBalanceTask unBlocking = json.fromJson(input, UnLockBalanceTask.class);
+
+        return unBlocking;
+    }
+
     /**
      * Decodes parameters in percent-encoded URI-format ( e.g.
      * "name=Jack%20Daniels&pass=Single%20Malt" ) and adds them to given
@@ -1549,13 +1827,32 @@ public class ProcessRequest implements Runnable {
 //                                + "'" + callbackTask.getTransactions().get(0).getDescription() + "') (" + (System.currentTimeMillis() - start) + " ms)");
                         return callbackTask;
 
-                    case API_TYPE_FUNDING:// pay with user internal wallet
+                    case API_TYPE_FUNDING:// funding 
                         FundingTask funding = makeFungdingTask(body);
-//                        logger.info("Receive Request: '" + type + "': ("
-//                                + "'" + callbackTask.getTransactions().get(0).getAmount().getTotal() + "',"
-//                                + "'" + callbackTask.getTransactions().get(0).getAmount().getCurrency() + "',"
-//                                + "'" + callbackTask.getTransactions().get(0).getDescription() + "') (" + (System.currentTimeMillis() - start) + " ms)");
+                        logger.info("Receive Request: '" + type + "': ("
+                                + "'" + funding.getId() + "',"
+                                + "'" + funding.getFund() + "',"
+                                + "'" + funding.getCurrency() + "',"
+                                + "'" + funding.getReason() + "') (" + (System.currentTimeMillis() - start) + " ms)");
                         return funding;
+
+                    case API_TYPE_BLOCKBALANCE:// block apart wallet balance
+                        LockBalanceTask blocking = makeBlockingTask(body);
+                        logger.info("Receive Request: '" + type + "': ("
+                                + "'" + blocking.getId() + "',"
+                                + "'" + blocking.getBlock_amount() + "',"
+                                + "'" + blocking.getBlock_currency() + "',"
+                                + "'" + blocking.getBlock_reason() + "') (" + (System.currentTimeMillis() - start) + " ms)");
+                        return blocking;
+
+                    case API_TYPE_UNBLOCKBALANCE:// unblock apart blocked balance
+                        UnLockBalanceTask unBlocking = makeUnBlockingTask(body);
+                        logger.info("Receive Request: '" + type + "': ("
+                                + "'" + unBlocking.getId() + "',"
+                                + "'" + unBlocking.getBlock_amount() + "',"
+                                + "'" + unBlocking.getBlock_currency() + "',"
+                                + "'" + unBlocking.getBlock_reason() + "') (" + (System.currentTimeMillis() - start) + " ms)");
+                        return unBlocking;
                     default:
                         return null;
                 }
@@ -1999,6 +2296,34 @@ public class ProcessRequest implements Runnable {
                     sendResultToClient(s, "{\"status\":\"ERROR\", \"description\":\"system error\"}");
                 }
                 break;
+
+            case "REWARD"://rewards
+                try {
+                    //select database to get all record
+                    List<History> hisReward = dbInf.getHisReward(user_id, from, to);
+                    logger.info("get reward His success with length = " + hisReward.size());
+                    //init pageable object
+                    Pageable pages = new Pageable(hisReward);
+
+                    //set page size
+                    pages.setPageSize(pageSize);
+
+                    //set page position need to get
+                    pages.setPage(pagePos);
+
+                    //get page
+                    List<History> result = pages.getListForPage();
+
+                    String response = makeJsonHis(result, GlobalVariables.TRANSACTION_STATUS_SUCCESS.toLowerCase(), pagePos, hisReward.size(), pageSize);
+
+                    //send result to client
+                    sendResultToClient(s, response);
+                } catch (Exception ex) {
+                    logger.error(ex.getMessage(), ex);
+                    sendResultToClient(s, "{\"status\":\"ERROR\", \"description\":\"system error\"}");
+                }
+                break;
+
             default: //invalid
                 sendResultToClient(s, "{\"status\":\"INVALID\", \"description\":\"invalid input\"}");
                 break;
@@ -2006,13 +2331,9 @@ public class ProcessRequest implements Runnable {
     }
 
     private void doReportRevenue(Socket s, Map<String, List<String>> values) {
-        long start = System.currentTimeMillis();
+//        long start = System.currentTimeMillis();
         try {
 
-//            int total = 0;
-//            int sum_usd = 0;
-//            int sum_eur = 0;
-//            int sum_ava = 0;
             Wallet sumWallet = new Wallet(0, 0, 0);
             Coingate sumCoingate = new Coingate(0, 0, 0);
 
@@ -2051,6 +2372,43 @@ public class ProcessRequest implements Runnable {
         }
     }
 
+    private void doCheckBalance(Socket s, String userID) {
+        long start = System.currentTimeMillis();
+
+        UserBalance ub = dbInf.getBalance(userID, "AVA");
+
+        int status = ub.getStatus();
+        switch (status) {
+            case 0: //check balance succes
+                ResponseDTO respSuccess = new ResponseDTO(ub);
+                String rspMsg = new Gson().toJson(respSuccess);
+
+                sendResultToClient(s, rspMsg);
+                break;
+            case -1: //user not found
+                ResponseDTO respFailUser = new ResponseDTO(ub);
+                respFailUser.setSuccess(false);
+                respFailUser.setError(new BaseError("user not found", null));
+
+                String rspMsgUserFail = new Gson().toJson(respFailUser);
+
+                sendResultToClient(s, rspMsgUserFail);
+                break;
+
+            case -2: //system error
+                ResponseDTO respSystemError = new ResponseDTO(ub);
+                respSystemError.setSuccess(false);
+                respSystemError.setError(new BaseError("system error", null));
+
+                String rspMsgSystemErorr = new Gson().toJson(respSystemError);
+
+                sendResultToClient(s, rspMsgSystemErorr);
+                break;
+        }
+
+        logger.info("finish check balance in " + (System.currentTimeMillis() - start) + " ms");
+    }
+
     private String makeJsonHis(List<History> result, String status, int pagePosition, int total, int pageSize) {
         Gson gson = new Gson();
         Meta meta = new Meta(pagePosition, total, pageSize);
@@ -2073,10 +2431,11 @@ public class ProcessRequest implements Runnable {
 
         switch (check) {
             case 0: //ok
-                double balance = dbInf.getBalance(notify.getUser_id(), notify.getCurrency());
+                UserBalance ub = dbInf.getBalance(notify.getUser_id(), notify.getCurrency());
+                double balance = ub.getAvailable();
                 try {
                     double amount = Double.valueOf(notify.getAmount());
-                    if (amount > balance) {
+                    if (amount > balance && balance > 0) {
                         logger.info("user " + notify.getUser_id() + " is not enough balance. Balance:" + balance);
 
                         sendResultToClient(s, "failed", GlobalVariables.MSG_NOT_ENOUGH_BALANCE);
@@ -2087,15 +2446,23 @@ public class ProcessRequest implements Runnable {
 //                                new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
 //                                null, IDgenerator.getInstance().genID());
                         return;
-                    } else {
+                    } else if (balance > 0) {
                         sendResultToClient(s, GlobalVariables.TRANSACTION_STATUS_SUCCESS.toLowerCase(), "ok");
                         dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_START,
                                 Double.valueOf(notify.getAmount()),
                                 new Timestamp(Long.valueOf(notify.getCreated_at())),
                                 "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
                                 new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-                                null, IDgenerator.getInstance().genID());
+                                null, IDgenerator.getInstance().genID(), 6, null);
                         return;
+                    } else {
+                        if (ub.getStatus() == -1) {
+                            logger.info("user id " + notify.getUser_id() + " is not found --> pleade check");
+                            sendResultToClient(s, "failed", "user not found");
+                        } else {
+                            logger.info("System error");
+                            sendResultToClient(s, "failed", "system error");
+                        }
                     }
                 } catch (Exception ex) {
                     logger.error(ex.getMessage(), ex);
@@ -2172,6 +2539,25 @@ public class ProcessRequest implements Runnable {
 
                 //send notfify
                 notify(pTask.getUser_id());
+//                if (!result) {
+//                    for (int i = 0; i < 3; i++) {
+//
+//                        //sleep for next retry
+//                        try {
+//                            Thread.sleep(500);
+//                        } catch (InterruptedException ex) {
+//                            java.util.logging.Logger.getLogger(ProcessRequest.class.getName()).log(Level.SEVERE, null, ex);
+//                        }
+//
+//                        //retry i times
+//                        result = notify(pTask.getUser_id());
+//                        if (result) {
+//
+//                            //retry success --> break loop
+//                            break;
+//                        }
+//                    }
+//                }
             } else {
                 dbInf.updateStatusHistory(pTask.getBooking_number(), GlobalVariables.TRANSACTION_STATUS_FAIL, "PAY");
 
@@ -2182,7 +2568,7 @@ public class ProcessRequest implements Runnable {
                         new Timestamp(System.currentTimeMillis()), "", "",
                         "REFUND", pTask.getUser_id(), null, pTask.getPay_currency(),
                         ((PayTaskWrapper) object).getTransID(),
-                        IDgenerator.getInstance().genID());
+                        IDgenerator.getInstance().genID(), 2, null);
             }
 
             //remove object
@@ -2282,7 +2668,7 @@ public class ProcessRequest implements Runnable {
         //insert into history
         dbInf.insertHistory(id, GlobalVariables.TRANSACTION_STATUS_PENDING, paymentPaypalTask.getTransactions().get(0).getAmount().getTotal(),
                 new Timestamp(System.currentTimeMillis()), null, null, GlobalVariables.TRANSACTION_TYPE_PAYPAL, paymentPaypalTask.getUser_id(), null, paymentPaypalTask.getTransactions().get(0).getAmount().getCurrency(),
-                paymentPaypalTask.getOrder_id(), IDgenerator.getInstance().genID());
+                paymentPaypalTask.getOrder_id(), IDgenerator.getInstance().genID(), 7, null);
 
         //insert into transaction history
         dbInf.insertOrderHist(paymentPaypalTask, createResponse.getState(), null);
@@ -2487,8 +2873,18 @@ public class ProcessRequest implements Runnable {
                             }
 
                         } else {
-                            //comple --> notify booking paysuccess
-                            Main.getInstance().getNotifyQueue().enqueue(orderID);
+
+                            //check
+                            int x = dbInf.checkPaidNotify(orderID);
+                            if (x != 1) { //notify include not found and check db exception
+
+                                //insert his
+                                dbInf.insertPaidNotifyHis(orderID, GlobalVariables.PAY_PAYPAL, event_type);
+
+                                //complete --> notify booking paysuccess
+                                Main.getInstance().getNotifyQueue().enqueue(orderID);
+                            }
+
                             GlobalObject.getInstance().getHashPaypalExeLink().remove(parentID);
                             logger.info("[" + orderID + "] Payment Success");
                             if (o instanceof CreatePaymentTask) {
@@ -2590,7 +2986,7 @@ public class ProcessRequest implements Runnable {
 
                         //insert db:
                         dbInf.insertHistory(id, STATUS_FAILED, -1, new Timestamp(System.currentTimeMillis()),
-                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+                                "", "", transaction_type, userID, null, currency, reason, transactionid, 3, reason);
 
                         return;
                     }
@@ -2601,7 +2997,7 @@ public class ProcessRequest implements Runnable {
 
                     //insert db:
                     dbInf.insertHistory(id, STATUS_FAILED, -1, new Timestamp(System.currentTimeMillis()),
-                            "", "", transaction_type, userID, null, currency, reason, transactionid);
+                            "", "", transaction_type, userID, null, currency, reason, transactionid, 3, reason);
                     //end job
                     return;
                 }
@@ -2614,7 +3010,10 @@ public class ProcessRequest implements Runnable {
 
                         //insert db:
                         dbInf.insertHistory(id, STATUS_SUCCESS, amount, new Timestamp(System.currentTimeMillis()),
-                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+                                "", "", transaction_type, userID, null, currency, reason, transactionid, 3, reason);
+
+                        notify(userID);
+
                         break;
                     case 1: //system error
                         com.digitechlabs.paymentgw.funding.Response respError = new com.digitechlabs.paymentgw.funding.Response("fail", "system error");
@@ -2622,7 +3021,7 @@ public class ProcessRequest implements Runnable {
 
                         //insert db
                         dbInf.insertHistory(id, STATUS_FAILED, amount, new Timestamp(System.currentTimeMillis()),
-                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+                                "", "", transaction_type, userID, null, currency, reason, transactionid, 3, reason);
                         break;
                     case -1: //user not found
                         com.digitechlabs.paymentgw.funding.Response respUserNotFound = new com.digitechlabs.paymentgw.funding.Response("fail", "user not found");
@@ -2630,7 +3029,7 @@ public class ProcessRequest implements Runnable {
 
                         //insert db
                         dbInf.insertHistory(id, STATUS_FAILED, amount, new Timestamp(System.currentTimeMillis()),
-                                "", "", transaction_type, userID, null, currency, reason, transactionid);
+                                "", "", transaction_type, userID, null, currency, reason, transactionid, 3, reason);
 
                         break;
                     default://do nothing

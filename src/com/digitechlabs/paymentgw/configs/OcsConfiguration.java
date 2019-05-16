@@ -1,4 +1,3 @@
-
 package com.digitechlabs.paymentgw.configs;
 
 public class OcsConfiguration {

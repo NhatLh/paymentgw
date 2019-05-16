@@ -55,6 +55,8 @@ public class ConfigLoader extends ProcessThreadMX {
     private String notifyBookFailHeader;
     private String notifyBookFailPrivatekey;
 
+    private long reportBalanceSystemPeriod = 5 * 60 * 1000;
+
     public static synchronized ConfigLoader getInstance() {
         if (instance == null) {
             instance = new ConfigLoader("config");
@@ -116,6 +118,9 @@ public class ConfigLoader extends ProcessThreadMX {
             this.notifyBookFailUrl = prop.getProperty("notify.book.fail.url");
             this.notifyBookFailHeader = prop.getProperty("notify.book.fail.header");
             this.notifyBookFailPrivatekey = prop.getProperty("notify.book.fail.privatekey");
+
+            temp = prop.getProperty("wallet.report.period", "5");
+            this.reportBalanceSystemPeriod = Long.valueOf(temp) * 60 * 1000;
 
         } catch (IOException ex) {
             logger.error("ERR: " + ex.getMessage() + " --> please try config again", ex);
@@ -323,6 +328,14 @@ public class ConfigLoader extends ProcessThreadMX {
 
     public void setMaxFunding(long maxFunding) {
         this.maxFunding = maxFunding;
+    }
+
+    public long getReportBalanceSystemPeriod() {
+        return reportBalanceSystemPeriod;
+    }
+
+    public void setReportBalanceSystemPeriod(long reportBalanceSystemPeriod) {
+        this.reportBalanceSystemPeriod = reportBalanceSystemPeriod;
     }
 
 }

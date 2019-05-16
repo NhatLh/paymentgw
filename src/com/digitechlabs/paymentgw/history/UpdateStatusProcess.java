@@ -35,8 +35,6 @@ public class UpdateStatusProcess extends ProcessThread {
     protected void process() {
         updateStatus();
 
-        //test notify
-//        notify.sendMessageToSocket("tam@travala.com", 93, "AYJkqBCmayBAwqU9rFPyikJJs2AkqWP7jm", status);
         try {
             Thread.sleep(10000);
         } catch (InterruptedException ex) {

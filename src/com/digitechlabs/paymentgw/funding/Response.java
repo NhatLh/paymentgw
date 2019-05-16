@@ -12,11 +12,11 @@ package com.digitechlabs.paymentgw.funding;
 public class Response {
 
     private String status;
-    private String description;
+    private String data;
 
-    public Response(String status, String description) {
+    public Response(String status, String data) {
         this.status = status;
-        this.description = description;
+        this.data = data;
     }
 
     public String getStatus() {
@@ -28,11 +28,11 @@ public class Response {
     }
 
     public String getDescription() {
-        return description;
+        return data;
     }
 
-    public void setDescription(String description) {
-        this.description = description;
+    public void setDescription(String data) {
+        this.data = data;
     }
 
 }

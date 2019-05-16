@@ -1,5 +1,6 @@
 package com.digitechlabs.paymentgw.main;
 
+import com.digitechlabs.paymentgw.Object.jobs.ReportBalanceSystem;
 import com.digitechlabs.paymentgw.soap.HttpListener;
 import java.io.FileInputStream;
 import java.util.Properties;
@@ -8,7 +9,6 @@ import com.digitechlabs.paymentgw.configs.MyLog;
 import com.digitechlabs.paymentgw.currency.SyncRateProcess;
 import com.digitechlabs.paymentgw.history.UpdateStatusProcess;
 import com.digitechlabs.paymentgw.paypal.token.GetTokenProcess;
-import com.digitechlabs.paymentgw.rabbitqueue.RabbitMQHisWalletSender;
 import com.digitechlabs.paymentgw.rabbitqueue.RabbitQueueProcess;
 import java.io.File;
 import java.io.IOException;
@@ -44,6 +44,8 @@ public class Main {
         Main r = Main.getInstance();
         r.start();
 
+        ReportBalanceSystem.getInstance().start();
+
     }
 
     public static synchronized Main getInstance() {
@@ -66,7 +68,7 @@ public class Main {
         processor.start();
 
         UpdateStatusProcess.getInstance().start();
-        RabbitMQHisWalletSender.getInstance().start();
+//        RabbitMQHisWalletSender.getInstance().start();
     }
 
     public void stop() {
@@ -76,7 +78,7 @@ public class Main {
         processor.stop();
         SyncRateProcess.getInstance().stop();
         GetTokenProcess.getInstance().stop();
-        RabbitMQHisWalletSender.getInstance().stop();
+//        RabbitMQHisWalletSender.getInstance().stop();
     }
 
     public void loadConfig() {

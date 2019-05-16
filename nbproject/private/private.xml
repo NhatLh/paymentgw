@@ -6,8 +6,6 @@
             <file>file:/D:/1.SOURCE%20CODE/1.%20PaymentGW/travala-payment-gateway-master/src/com/digitechlabs/paymentgw/soap/ProcessRequest.java</file>
             <file>file:/D:/1.SOURCE%20CODE/1.%20PaymentGW/travala-payment-gateway-master/src/com/digitechlabs/paymentgw/main/Main.java</file>
             <file>file:/D:/1.SOURCE%20CODE/1.%20PaymentGW/travala-payment-gateway-master/src/com/digitechlabs/paymentgw/dbpooling/DbInterface.java</file>
-            <file>file:/D:/1.SOURCE%20CODE/1.%20PaymentGW/travala-payment-gateway-master/src/com/digitechlabs/paymentgw/rabbitqueue/RabbitMQHisWalletSender.java</file>
-            <file>file:/D:/1.SOURCE%20CODE/1.%20PaymentGW/travala-payment-gateway-master/src/com/digitechlabs/paymentgw/configs/ConfigLoader.java</file>
             <file>file:/D:/1.SOURCE%20CODE/1.%20PaymentGW/travala-payment-gateway-master/src/com/digitechlabs/paymentgw/utils/GlobalVariables.java</file>
         </group>
     </open-files>

@@ -9,12 +9,12 @@ package com.digitechlabs.paymentgw.wallet;
  *
  * @author FOCUS
  */
-public class Refund {
+public class TransInfo {
 
     private String user_id;
     private double amount;
 
-    public Refund(String user_id, double amount) {
+    public TransInfo(String user_id, double amount) {
         this.user_id = user_id;
         this.amount = amount;
     }

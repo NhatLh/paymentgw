@@ -7,25 +7,21 @@ package com.digitechlabs.paymentgw.dbpooling;
 
 import com.digitechlabs.paymentgw.Object.UserWallet;
 import com.digitechlabs.paymentgw.coingate.CheckoutTask;
-import com.digitechlabs.paymentgw.currency.SyncRateProcess;
 import com.digitechlabs.paymentgw.history.History;
-import com.digitechlabs.paymentgw.history.HistoryRequest;
 import com.digitechlabs.paymentgw.history.WithdrawClientNotifyTask;
 import com.digitechlabs.paymentgw.orderdetails.OrderDetails;
 import com.digitechlabs.paymentgw.paypal.client.request.CreatePaymentTask;
 import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletInsert;
-import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletUpdate;
-import com.digitechlabs.paymentgw.rabbitqueue.RabbitMQHisWalletSender;
 import com.digitechlabs.paymentgw.restobject.CallbackTask;
 import com.digitechlabs.paymentgw.restobject.OrderTask;
 import com.digitechlabs.paymentgw.restobject.PayTask;
 import com.digitechlabs.paymentgw.restobject.WithdrawRequestTask;
 import com.digitechlabs.paymentgw.revenue.Coingate;
 import com.digitechlabs.paymentgw.revenue.Wallet;
-import com.digitechlabs.paymentgw.soap.ProcessRequest;
 import com.digitechlabs.paymentgw.utils.GlobalVariables;
+import com.digitechlabs.paymentgw.utils.UserBalance;
 import com.digitechlabs.paymentgw.wallet.Deposit;
-import com.digitechlabs.paymentgw.wallet.Refund;
+import com.digitechlabs.paymentgw.wallet.TransInfo;
 import com.google.gson.Gson;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -40,6 +36,7 @@ import java.util.Date;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.UUID;
+import java.util.logging.Level;
 import org.apache.log4j.Logger;
 
 /**
@@ -50,7 +47,7 @@ public class DbInterface {
 
     Logger logger = Logger.getLogger(DbInterface.class);
     private final SimpleDateFormat sdf = new SimpleDateFormat("YYYY-MM-dd'T'HH:mm:ssXXX");
-    private Gson gson = new Gson();
+    private final Gson gson = new Gson();
 
     public DbInterface() {
     }
@@ -220,6 +217,10 @@ public class DbInterface {
      * insert log history of every transaction create order
      *
      * @param task
+     * @param receive_amout
+     * @param pay_amount
+     * @param pay_currency
+     * @param status
      */
     public void insertOrderHist(OrderTask task, String receive_amout, String pay_amount, String pay_currency, String status) {
         Connection conn = null;
@@ -413,7 +414,7 @@ public class DbInterface {
 
     public void insertHistory(String id, String status, double amount,
             Timestamp created_at, String from_address, String to_address,
-            String transaction_type, String user_id, Timestamp expired_time, String currency, String order_id, String transaction_id) {
+            String transaction_type, String user_id, Timestamp expired_time, String currency, String order_id, String transaction_id, int transaction_type_id, String note) {
         long start = System.currentTimeMillis();
         Connection conn = null;
         PreparedStatement pstm = null;
@@ -436,6 +437,8 @@ public class DbInterface {
                 pstm.setString(10, currency);
                 pstm.setString(11, order_id);
                 pstm.setString(12, transaction_id);
+                pstm.setInt(13, transaction_type_id);
+                pstm.setString(14, note);
 
                 int result = pstm.executeUpdate();
             } else {
@@ -461,14 +464,14 @@ public class DbInterface {
             }
         }
 
-        //send message to queue
-        HistoryWalletInsert his = createHisWalletObject(id, status, amount, created_at, from_address, to_address, transaction_type, user_id, expired_time, currency, order_id, transaction_id);
-        logger.info("[" + id + "]Finish Insert history in " + (System.currentTimeMillis() - start) + " ms");
-
-        HistoryRequest request = new HistoryRequest("insert", his, null);
-
-        String message = gson.toJson(request);
-        RabbitMQHisWalletSender.getInstance().enqueue(message);
+        //send message to queue --> do next sprint
+//        HistoryWalletInsert his = createHisWalletObject(id, status, amount, created_at, from_address, to_address, transaction_type, user_id, expired_time, currency, order_id, transaction_id);
+//        logger.info("[" + id + "]Finish Insert history in " + (System.currentTimeMillis() - start) + " ms");
+//
+//        HistoryRequest request = new HistoryRequest("insert", his, null);
+//
+//        String message = gson.toJson(request);
+//        RabbitMQHisWalletSender.getInstance().enqueue(message);
     }
 
     public HistoryWalletInsert createHisWalletObject(String id, String status, double amount,
@@ -494,8 +497,8 @@ public class DbInterface {
     }
 
     public double[] checkLimit(WithdrawRequestTask task) {
-        double limit = 0;
-        double amount = 0;
+        double limit;
+        double amount;
 
         try {
             limit = Double.valueOf(task.getMax_per_day());
@@ -560,12 +563,13 @@ public class DbInterface {
         }
     }
 
-    public double getBalance(String userID, String currency) {
+    public UserBalance getBalance(String userID, String currency) {
 
         String sql = GlobalVariables.SQL_GET_BALANCE;
         Connection conn = null;
         PreparedStatement pstm = null;
         ResultSet rs = null;
+        UserBalance ub = new UserBalance();
         try {
             conn = DBConnect.getConnection("conn");
 
@@ -575,17 +579,27 @@ public class DbInterface {
 
             rs = pstm.executeQuery();
             double balance;
+            double block;
+            double award;
             if (rs.next()) {
-                balance = rs.getDouble(1);
+                balance = rs.getDouble("balance");
+                block = rs.getDouble("blocked");
+                award = rs.getDouble("award");
 
-                return balance;
+                ub.setAvailable(balance);
+                ub.setBlocked(block);
+                ub.setAward(award);
+
+                return ub;
             } else {
-                return -1;
+                ub.setStatus(-1);
+                return ub;
             }
         } catch (SQLException ex) {
             logger.error(ex.getMessage(), ex);
             logger.info("get balance:" + userID + ", with currency:" + currency + " FAIL --> Please Check");
-            return -2; //system error
+            ub.setStatus(-2);
+            return ub; //system error
         } finally {
             if (rs != null) {
                 try {
@@ -858,8 +872,8 @@ public class DbInterface {
      * @return
      */
     public double[] checkLimit(WithdrawClientNotifyTask task) {
-        double limit = 0;
-        double amount = 0;
+        double limit;
+        double amount;
 
         try {
             limit = Double.valueOf(task.getMax_per_day());
@@ -996,12 +1010,12 @@ public class DbInterface {
                 logger.info("[row:" + row + "]update id:" + id + ", to status:" + status + " fail");
             }
 
-            HistoryWalletUpdate his = new HistoryWalletUpdate(id, status, transType);
-            HistoryRequest request = new HistoryRequest("update", null, his);
-
-            String message = gson.toJson(request);
-            RabbitMQHisWalletSender.getInstance().enqueue(message);
-
+            //next sprint
+//            HistoryWalletUpdate his = new HistoryWalletUpdate(id, status, transType);
+//            HistoryRequest request = new HistoryRequest("update", null, his);
+//
+//            String message = gson.toJson(request);
+//            RabbitMQHisWalletSender.getInstance().enqueue(message);
             return 0;
         } catch (SQLException ex) {
             logger.error(ex.getMessage(), ex);
@@ -1183,6 +1197,167 @@ public class DbInterface {
         }
 
         logger.info("[" + task.getOrder_id() + "]Finish insert db in " + (System.currentTimeMillis() - start) + " ms");
+    }
+
+    public void insertPaidNotifyHis(String orderId, String type, String status) {
+        long start = System.currentTimeMillis();
+        Connection conn = null;
+        PreparedStatement pstm = null;
+
+        String sql = GlobalVariables.SQL_INSERT_PAID_NOTIFY_HIS;
+
+        try {
+            conn = DBConnect.getConnection("conn");
+            if (conn != null) {
+                pstm = conn.prepareStatement(sql);
+                pstm.setString(1, orderId);
+                pstm.setString(2, type);
+                pstm.setString(3, status);
+
+                pstm.executeUpdate();
+
+                logger.info("[" + orderId + "]Insert his paid notify success for order ");
+
+            } else {
+                logger.error("[" + orderId + "]Lost DB connection --> Please Checks");
+            }
+        } catch (SQLException ex) {
+            logger.error("[" + orderId + "]" + ex.getMessage(), ex);
+        } finally {
+            if (pstm != null) {
+                try {
+                    pstm.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+        }
+
+        logger.info("[" + orderId + "]Finish insert db in " + (System.currentTimeMillis() - start) + " ms");
+    }
+
+    /**
+     * Check callback event duplicate
+     *
+     * @param orderId
+     * @param status
+     * @return -1: system error. 0: transaction not found. 1: found duplicate
+     * transaction
+     */
+    public int checkCallback(String orderId, String status) {
+        Connection conn = null;
+        PreparedStatement pstm = null;
+        ResultSet rs = null;
+        String sql = GlobalVariables.SQL_SELECT_CHECK_COINGATE_CALLBACK;
+
+        try {
+            conn = DBConnect.getConnection("conn");
+            if (conn != null) {
+                pstm = conn.prepareStatement(sql);
+                pstm.setString(1, orderId);
+                pstm.setString(2, status);
+                pstm.setString(3, GlobalVariables.PAY_COINGATE);
+
+                rs = pstm.executeQuery();
+                if (rs.next()) {
+//                    logger.info("order id:" + orderId + " with status:" + status + " already get callback");
+                    return 1;
+                } else {
+                    return 0;
+                }
+            } else {
+                logger.error("Error when getting connection.");
+                return -1;
+            }
+        } catch (SQLException ex) {
+            logger.error(ex.getMessage(), ex);
+            return -1;
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (pstm != null) {
+                try {
+                    pstm.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+        }
+    }
+
+    public int checkPaidNotify(String orderId) {
+        Connection conn = null;
+        PreparedStatement pstm = null;
+        ResultSet rs = null;
+        String sql = GlobalVariables.SQL_SELECT_CHECK_PAID_NOTIFY;
+
+        try {
+            conn = DBConnect.getConnection("conn");
+            if (conn != null) {
+                pstm = conn.prepareStatement(sql);
+                pstm.setString(1, orderId);
+
+                rs = pstm.executeQuery();
+                if (rs.next()) {
+                    logger.info("order id:" + orderId + " with status:" + rs.getString("status") + " already notify paid for booking");
+                    return 1;
+                } else {
+                    return 0;
+                }
+            } else {
+                logger.error("Error when getting connection.");
+                return -1;
+            }
+        } catch (SQLException ex) {
+            logger.error(ex.getMessage(), ex);
+            return -1;
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (pstm != null) {
+                try {
+                    pstm.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+        }
     }
 
     public void insertOrderHist(CreatePaymentTask task, String status, String revenue) {
@@ -1582,8 +1757,8 @@ public class DbInterface {
         }
     }
 
-    public Refund getRefund(long transaction_id) {
-        String sql = GlobalVariables.SELECT_INFO_REFUND;
+    public TransInfo getTransInfo(long transaction_id) {
+        String sql = GlobalVariables.SELECT_INFO;
         Connection conn = null;
         PreparedStatement pstm = null;
         ResultSet rs = null;
@@ -1599,7 +1774,7 @@ public class DbInterface {
                 String userId = rs.getString("user_id");
                 double amount = rs.getDouble("amount");
 
-                Refund ref = new Refund(userId, amount);
+                TransInfo ref = new TransInfo(userId, amount);
                 return ref;
             } else {
                 return null;
@@ -1734,7 +1909,7 @@ public class DbInterface {
             pstm.setString(1, userID);
             pstm.setTimestamp(2, new Timestamp(from.getTime()));
             pstm.setTimestamp(3, new Timestamp(to.getTime() + GlobalVariables.MILIS_DAY));
-            pstm.setString(4, "PAY");
+            pstm.setInt(4, 1);
 
             rs = pstm.executeQuery();
             while (rs.next()) {
@@ -1749,8 +1924,91 @@ public class DbInterface {
                 String trans_type = rs.getString("transaction_type");
                 String order_id = rs.getString("order_id");
                 String transaction_id = rs.getString("transaction_id");
+                String note = rs.getString("note");
 
-                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, order_id, transaction_id);
+                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, order_id, transaction_id, note);
+                his.add(h);
+            }
+            return his;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage(), ex);
+            return null;
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (pstm != null) {
+                try {
+                    pstm.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (SQLException ex) {
+                    logger.error(ex.getMessage(), ex);
+                }
+            }
+        }
+    }
+
+    /**
+     * get history of reward
+     *
+     * @param userID history of user
+     * @param from history from
+     * @param to and to
+     * @return
+     */
+    public List<History> getHisReward(String userID, Date from, Date to) {
+        if (from == null) {
+            from = new Date(0);
+        }
+
+        if (to == null) {
+            to = new Date(System.currentTimeMillis());
+        }
+
+        String sql = GlobalVariables.SQL_SELECT_HIS_BY_TYPE;
+        Connection conn = null;
+        PreparedStatement pstm = null;
+        ResultSet rs = null;
+        List<History> his = new ArrayList<>();
+
+        try {
+            conn = DBConnect.getConnection("conn");
+            pstm = conn.prepareStatement(sql);
+            pstm.setString(1, userID);
+            pstm.setTimestamp(2, new Timestamp(from.getTime()));
+            pstm.setTimestamp(3, new Timestamp(to.getTime() + GlobalVariables.MILIS_DAY));
+            pstm.setInt(4, 3);
+
+            rs = pstm.executeQuery();
+            while (rs.next()) {
+
+                String orderID = rs.getString("id");
+                String status = rs.getString("status");
+                String amount = rs.getString("amount");
+                String created_at = rs.getString("created_at");
+                String to_address = rs.getString("to_address");
+                String from_address = rs.getString("from_address");
+                String currency = rs.getString("currency");
+                String trans_type = rs.getString("transaction_type");
+//                String order_id = rs.getString("order_id");
+                String transaction_id = rs.getString("transaction_id");
+                String note = rs.getString("note");
+
+                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, "", transaction_id, note);
+//                h.setNote(note);
+
                 his.add(h);
             }
             return his;
@@ -1881,7 +2139,7 @@ public class DbInterface {
             pstm.setString(1, userID);
             pstm.setTimestamp(2, new Timestamp(from.getTime()));
             pstm.setTimestamp(3, new Timestamp(to.getTime() + GlobalVariables.MILIS_DAY));
-            pstm.setString(4, "DEPOSIT");
+            pstm.setInt(4, 5);
 
             rs = pstm.executeQuery();
             while (rs.next()) {
@@ -1894,10 +2152,10 @@ public class DbInterface {
                 String from_address = rs.getString("from_address");
                 String currency = rs.getString("currency");
                 String trans_type = rs.getString("transaction_type");
-                String order_id = rs.getString("order_id");
+//                String order_id = rs.getString("order_id");
                 String transaction_id = rs.getString("transaction_id");
 
-                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, order_id, transaction_id);
+                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, "", transaction_id, null);
                 his.add(h);
             }
             return his;
@@ -1940,6 +2198,10 @@ public class DbInterface {
             to = new Date(System.currentTimeMillis());
         }
 
+        /**
+         * 1 - pay; 2 - refund; 3 - reward; 4 - lock and unlock; 5 - Deposit; 6
+         * - Withdraw; 7 - paypal --> get 1 2 3 4 5 6
+         */
         String sql = GlobalVariables.SQL_SELECT_HIS;
         Connection conn = null;
         PreparedStatement pstm = null;
@@ -1952,10 +2214,23 @@ public class DbInterface {
             pstm.setString(1, userID);
             pstm.setTimestamp(2, new Timestamp(from.getTime()));
             pstm.setTimestamp(3, new Timestamp(to.getTime() + GlobalVariables.MILIS_DAY));
-            pstm.setString(4, "DEPOSIT");
-            pstm.setString(5, "WITHDRAW");
-            pstm.setString(6, "PAY");
-            pstm.setString(7, "REFUND");
+            //type Pay
+            pstm.setInt(4, 1);
+
+            //type refund
+            pstm.setInt(5, 2);
+
+            //type reward
+            pstm.setInt(6, 3);
+
+            //type lock and unlock
+            pstm.setInt(7, 4);
+
+            //type deposit
+            pstm.setInt(8, 5);
+
+            //type withdraw
+            pstm.setInt(9, 6);
 
             rs = pstm.executeQuery();
             while (rs.next()) {
@@ -1970,9 +2245,18 @@ public class DbInterface {
                 String trans_type = rs.getString("transaction_type");
                 String order_id = rs.getString("order_id");
                 String transaction_id = rs.getString("transaction_id");
+                String note = rs.getString("note");
 
-                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, order_id, transaction_id);
-                his.add(h);
+                int transTypeId = rs.getInt("transaction_type_id");
+                History h;
+
+                //type deposit
+                if ((transTypeId == 3 || transTypeId == 4) && !status.equalsIgnoreCase("success")) {
+                    logger.debug("ignore record");
+                } else {
+                    h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, order_id, transaction_id, note);
+                    his.add(h);
+                }
             }
             return his;
         } catch (Exception ex) {
@@ -2036,7 +2320,7 @@ public class DbInterface {
             pstm.setString(1, userID);
             pstm.setTimestamp(2, new Timestamp(from.getTime()));
             pstm.setTimestamp(3, new Timestamp(to.getTime() + GlobalVariables.MILIS_DAY));
-            pstm.setString(4, "WITHDRAW");
+            pstm.setInt(4, 6);
 
             rs = pstm.executeQuery();
             while (rs.next()) {
@@ -2049,10 +2333,10 @@ public class DbInterface {
                 String from_address = rs.getString("from_address");
                 String currency = rs.getString("currency");
                 String trans_type = rs.getString("transaction_type");
-                String order_id = rs.getString("order_id");
+//                String order_id = rs.getString("order_id");
                 String transaction_id = rs.getString("transaction_id");
 
-                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, order_id, transaction_id);
+                History h = new History(orderID, status, amount, created_at, from_address, to_address, trans_type, currency, "", transaction_id, null);
                 his.add(h);
             }
             return his;
@@ -2194,6 +2478,170 @@ public class DbInterface {
             }
         }
         return hRate;
+    }
+
+    /**
+     * block apart of balance for some reason.
+     *
+     * @param userID ID of user
+     * @param currency
+     * @param blockAmount
+     * @param id
+     * @return: -1 query exception; 0 - account not found; 1 - balance is not
+     * enough, 2 - success
+     */
+    public int blockBalane(String userID, String currency, double blockAmount, String id) {
+        String sql = GlobalVariables.SQL_SELECT_USERID_FOR_UPDATE_BLOCK;
+        Connection conn = null;
+        PreparedStatement pstm = null;
+        ResultSet rs = null;
+        try {
+            conn = DBConnect.getConnection("conn");
+            conn.setAutoCommit(false);
+
+            pstm = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+            pstm.setString(1, userID);
+            pstm.setString(2, currency.toUpperCase());
+
+            rs = pstm.executeQuery();
+
+            if (rs.next()) {
+                double balance = rs.getDouble("balance");
+                double blocked = rs.getDouble("blocked");
+//                double balance = Double.parseDouble(crypt.decrypt(en_balance));
+                if (balance >= blockAmount) {
+
+                    logger.info("Update balance from " + balance + " to " + (balance - blockAmount) + " by blockamount:" + blockAmount);
+                    rs.updateDouble("balance", balance - blockAmount);
+
+                    logger.info("Update blocked from " + blocked + " to " + (blocked + blockAmount) + " by blockamount:" + blockAmount);
+                    rs.updateDouble("blocked", blocked + blockAmount);
+                    rs.updateRow();
+
+                    conn.commit();
+
+                    return 2;
+                } else {
+                    logger.info("[" + id + "]user " + userID + " balance is not enough. Require:" + blockAmount + " actual: " + balance);
+                    conn.commit();
+                    return 1;
+                }
+            } else {
+                //return account not found
+                logger.warn("[" + id + "] UserID not found:" + userID + " with currency:" + currency);
+                conn.commit();
+                return 0;
+            }
+        } catch (SQLException ex) {
+            logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+            return -1;
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException ex) {
+                    logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+                }
+            }
+
+            if (pstm != null) {
+                try {
+                    pstm.close();
+                } catch (SQLException ex) {
+                    logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+                }
+            }
+
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (SQLException ex) {
+                    logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+                }
+            }
+        }
+    }
+
+    /**
+     * unblock apart of balance for some reason.
+     *
+     * @param userID ID of user
+     * @param currency
+     * @param blockAmount
+     * @param id
+     * @return: -1 query exception; 0 - account not found; 1 - balance is not
+     * enough, 2 - success
+     */
+    public int unblockBalane(String userID, String currency, double blockAmount, String id) {
+        String sql = GlobalVariables.SQL_SELECT_USERID_FOR_UPDATE_BLOCK;
+        Connection conn = null;
+        PreparedStatement pstm = null;
+        ResultSet rs = null;
+        try {
+            conn = DBConnect.getConnection("conn");
+            conn.setAutoCommit(false);
+
+            pstm = conn.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+            pstm.setString(1, userID);
+            pstm.setString(2, currency.toUpperCase());
+
+            rs = pstm.executeQuery();
+
+            if (rs.next()) {
+                double balance = rs.getDouble("balance");
+                double blocked = rs.getDouble("blocked");
+//                double balance = Double.parseDouble(crypt.decrypt(en_balance));
+                if (blocked >= blockAmount) {
+
+                    logger.info("Update balance from " + balance + " to " + (balance + blockAmount) + " by unblockamount:" + blockAmount);
+                    rs.updateDouble("balance", balance + blockAmount);
+
+                    logger.info("Update blocked from " + blocked + " to " + (blocked - blockAmount) + " by unblockamount:" + blockAmount);
+                    rs.updateDouble("blocked", blocked - blockAmount);
+                    rs.updateRow();
+
+                    conn.commit();
+
+                    return 2;
+                } else {
+                    logger.info("[" + id + "]user " + userID + " blocked is not enough. Require:" + blockAmount + " actual: " + balance);
+                    conn.commit();
+                    return 1;
+                }
+            } else {
+                //return account not found
+                logger.warn("[" + id + "] UserID not found:" + userID + " with currency:" + currency);
+                conn.commit();
+                return 0;
+            }
+        } catch (SQLException ex) {
+            logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+            return -1;
+        } finally {
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException ex) {
+                    logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+                }
+            }
+
+            if (pstm != null) {
+                try {
+                    pstm.close();
+                } catch (SQLException ex) {
+                    logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+                }
+            }
+
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (SQLException ex) {
+                    logger.error("[" + id + "]SQL ERROR:" + ex.getMessage(), ex);
+                }
+            }
+        }
     }
 
 }

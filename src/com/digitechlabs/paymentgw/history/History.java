@@ -17,8 +17,22 @@ public class History {
     private String currency;
     private String order_id;
     private String transaction_id;
+    private String note;
 
-    public History(String id, String status, String amount, String created_at, String from_address, String to_address, String transaction_type, String currency, String order_id, String transaction_id) {
+//    public History(String id, String status, String amount, String created_at, String from_address, String to_address, String transaction_type, String currency, String order_id, String transaction_id) {
+//        this.id = id;
+//        this.status = status;
+//        this.amount = amount;
+//        this.created_at = created_at;
+//        this.from_address = from_address;
+//        this.to_address = to_address;
+//        this.transaction_type = transaction_type;
+//        this.currency = currency;
+//        this.order_id = order_id;
+//        this.transaction_id = transaction_id;
+//    }
+
+    public History(String id, String status, String amount, String created_at, String from_address, String to_address, String transaction_type, String currency, String order_id, String transaction_id, String note) {
         this.id = id;
         this.status = status;
         this.amount = amount;
@@ -29,6 +43,7 @@ public class History {
         this.currency = currency;
         this.order_id = order_id;
         this.transaction_id = transaction_id;
+        this.note = note;
     }
 
     public String getId() {
@@ -109,6 +124,14 @@ public class History {
 
     public void setTransaction_id(String transaction_id) {
         this.transaction_id = transaction_id;
+    }
+
+    public String getNote() {
+        return note;
+    }
+
+    public void setNote(String note) {
+        this.note = note;
     }
 
 }
