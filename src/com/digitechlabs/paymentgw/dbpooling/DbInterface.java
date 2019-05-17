@@ -8,14 +8,14 @@ package com.digitechlabs.paymentgw.dbpooling;
 import com.digitechlabs.paymentgw.Object.UserWallet;
 import com.digitechlabs.paymentgw.coingate.CheckoutTask;
 import com.digitechlabs.paymentgw.history.History;
-import com.digitechlabs.paymentgw.history.WithdrawClientNotifyTask;
+import com.digitechlabs.paymentgw.history.WithdrawUserRequestTask;
 import com.digitechlabs.paymentgw.orderdetails.OrderDetails;
 import com.digitechlabs.paymentgw.paypal.client.request.CreatePaymentTask;
 import com.digitechlabs.paymentgw.rabbitqueue.HistoryWalletInsert;
 import com.digitechlabs.paymentgw.restobject.CallbackTask;
 import com.digitechlabs.paymentgw.restobject.OrderTask;
 import com.digitechlabs.paymentgw.restobject.PayTask;
-import com.digitechlabs.paymentgw.restobject.WithdrawRequestTask;
+import com.digitechlabs.paymentgw.restobject.WithdrawUserConfirmedTask;
 import com.digitechlabs.paymentgw.revenue.Coingate;
 import com.digitechlabs.paymentgw.revenue.Wallet;
 import com.digitechlabs.paymentgw.utils.GlobalVariables;
@@ -496,13 +496,11 @@ public class DbInterface {
         return hw;
     }
 
-    public double[] checkLimit(WithdrawRequestTask task) {
+    public double[] checkLimit(WithdrawUserConfirmedTask task) {
         double limit;
-        double amount;
 
         try {
             limit = Double.valueOf(task.getMax_per_day());
-            amount = Double.valueOf(task.getAmount());
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             return new double[]{2, -1}; //invalid limit input
@@ -526,7 +524,8 @@ public class DbInterface {
             } else {
                 return new double[]{1, -1};
             }
-            if (sum + amount <= limit) {
+
+            if (sum <= limit) {
                 return new double[]{0, sum}; //sum less than limit
             } else {
                 return new double[]{1, sum}; //sum more than limit
@@ -871,7 +870,7 @@ public class DbInterface {
      * @param task
      * @return
      */
-    public double[] checkLimit(WithdrawClientNotifyTask task) {
+    public double[] checkLimit(WithdrawUserRequestTask task) {
         double limit;
         double amount;
 
@@ -1582,7 +1581,7 @@ public class DbInterface {
         logger.info("[" + userid + "]Finish insert db in " + (System.currentTimeMillis() - start) + " ms");
     }
 
-    public void insertWithdrawHis(String userid, String curency, String amount, String to_address, String max_day, String event, long transaction_id, String request_id) {
+    public void insertWithdrawHis(String userid, String curency, String amount, String to_address, String max_day, String event, Long transaction_id, String request_id) {
         long start = System.currentTimeMillis();
         Connection conn = null;
         PreparedStatement pstm = null;

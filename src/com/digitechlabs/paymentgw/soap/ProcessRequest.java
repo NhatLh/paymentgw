@@ -25,7 +25,7 @@ import com.digitechlabs.paymentgw.history.History;
 import com.digitechlabs.paymentgw.history.HistoryResponse;
 import com.digitechlabs.paymentgw.history.Meta;
 import com.digitechlabs.paymentgw.history.Pageable;
-import com.digitechlabs.paymentgw.history.WithdrawClientNotifyTask;
+import com.digitechlabs.paymentgw.history.WithdrawUserRequestTask;
 import com.digitechlabs.paymentgw.orderdetails.OrderDetails;
 import com.digitechlabs.paymentgw.orderdetails.Response;
 import com.digitechlabs.paymentgw.paypal.NotifyBookFail;
@@ -42,7 +42,7 @@ import com.digitechlabs.paymentgw.paypal.request.response.CreatePaymentResponse;
 import com.digitechlabs.paymentgw.paypal.request.response.Link;
 import com.digitechlabs.paymentgw.restobject.BookResponseTask;
 import com.digitechlabs.paymentgw.restobject.PayTaskWrapper;
-import com.digitechlabs.paymentgw.restobject.WithdrawRequestTask;
+import com.digitechlabs.paymentgw.restobject.WithdrawUserConfirmedTask;
 import com.digitechlabs.paymentgw.revenue.Coingate;
 import com.digitechlabs.paymentgw.revenue.Detail;
 import com.digitechlabs.paymentgw.revenue.Revenue;
@@ -958,9 +958,9 @@ public class ProcessRequest implements Runnable {
                         case "failed": //withdraw fail --> refund
                             logger.info("Withdraw transaction " + transactionID + ": fail --> refund transaction");
                             dbInf.insertWithdrawHis(transInfo.getUser_id(), wdTask.getData().getCurrency(), wdTask.getData().getAmount(), wdTask.getData().getTo_address(), "0", wdTask.getEvent(), transactionID, requestsID);
+
                             //refund
 //                        TransInfo refund = dbInf.getTransInfo(transactionID);
-
                             dbInf.updateBalance(transInfo.getUser_id(), wdTask.getData().getCurrency(), transInfo.getAmount());
                             logger.info("[" + transInfo.getUser_id() + "]" + "refund success");
 
@@ -1005,10 +1005,10 @@ public class ProcessRequest implements Runnable {
         logger.info("finish do Withdraw in " + (System.currentTimeMillis() - sta) + " ms");
     }
 
-    private void doWithdrawRequest(Socket s, String postLine) {
+    private void doWithdrawUserConfirmed(Socket s, String postLine) {
         long sta = System.currentTimeMillis();
         task = decodeParms(s, postLine, API_TYPE_WITHDRAW_REQUEST);
-        WithdrawRequestTask wdTask = (WithdrawRequestTask) task;
+        WithdrawUserConfirmedTask wdTask = (WithdrawUserConfirmedTask) task;
 
         String from_add = dbInf.getAddressfromUserCurrency(wdTask.getUser_id(), wdTask.getCurrency());
         switch (from_add) {
@@ -1084,20 +1084,8 @@ public class ProcessRequest implements Runnable {
                                     wdTask.getTo_address(), wdTask.getMax_per_day(), GlobalVariables.TRANSACTION_STATUS_SUCCESS, transaction_id, wdTask.getRequest_id());
 
                             //notify update balance
-//                            boolean rs;
                             notify(wdTask.getUser_id());
-//                            for (int i = 0; i < 3; i++) {
 
-//                                if (rs) {
-//                                    break;
-//                                }
-//
-//                                try {
-//                                    Thread.sleep(100);
-//                                } catch (InterruptedException ex) {
-//                                    java.util.logging.Logger.getLogger(ProcessRequest.class.getName()).log(Level.SEVERE, null, ex);
-//                                }
-//                            }
                         } else if (userID != null && userID.isEmpty()) { //send request withdraw
                             logger.info("[" + wdTask.getUser_id() + "]send request withdraw to address:" + wdTask.getTo_address());
                             client.setUrl(ConfigLoader.getInstance().getWalletURL() + "withdrawals");
@@ -1120,19 +1108,14 @@ public class ProcessRequest implements Runnable {
                                         logger.info("[" + wdTask.getUser_id() + "]refund success:" + wdTask.getAmount());
                                         dbInf.updateStatusHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL, "WITHDRAW");
                                     } else {
-
                                         transaction_id = Long.valueOf(rsp.getId());
 
                                         dbInf.insertWithdrawHis(wdTask.getUser_id(), wdTask.getCurrency(), wdTask.getAmount(),
-                                                wdTask.getTo_address(), wdTask.getMax_per_day(), GlobalVariables.TRANSACTION_STATUS_PENDING, transaction_id, wdTask.getRequest_id());
-//        dbInf.insert
-//                                //update status of transaction
-//                                dbInf.insertHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_PENDING, Double.parseDouble(wdTask.getAmount()),
-//                                        new Timestamp(System.currentTimeMillis()), "", wdTask.getTo_address(), "WITHDRAW", wdTask.getUser_id(), null, wdTask.getCurrency());
+                                                wdTask.getTo_address(), wdTask.getMax_per_day(), GlobalVariables.TRANSACTION_STATUS_CONFIRMING, transaction_id, wdTask.getRequest_id());
 
                                         //update status
                                         logger.info("going to update status of transaction");
-                                        dbInf.updateStatusHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_PENDING, "WITHDRAW");
+                                        dbInf.updateStatusHistory(wdTask.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_CONFIRMING, "WITHDRAW");
                                     }
                                 } else {
                                     //transaction fail --> refund
@@ -1298,10 +1281,10 @@ public class ProcessRequest implements Runnable {
                                             break;
                                         case "/payment/wallet/withdraw-request": //case backend notify create withdraw request
 //                                            sendError(s, "200", "OK", "0");
-                                            doWithdrawClientNotify(s, postLine);
+                                            doWithdrawUserRequest(s, postLine);
                                             break;
                                         case "/payment/wallet/withdraw": //case user withdraw
-                                            doWithdrawRequest(s, postLine);
+                                            doWithdrawUserConfirmed(s, postLine);
                                             break;
                                         case "/payment/paypal/create-payment":
                                             doCreatePaymentToPaypal(s, postLine);
@@ -1627,16 +1610,16 @@ public class ProcessRequest implements Runnable {
         return withdrawTask;
     }
 
-    private WithdrawRequestTask makeWithdrawRequestTask(String input) {
+    private WithdrawUserConfirmedTask makeWithdrawRequestTask(String input) {
         Gson json = new Gson();
-        WithdrawRequestTask withdrawRequestTask = json.fromJson(input, WithdrawRequestTask.class);
+        WithdrawUserConfirmedTask withdrawRequestTask = json.fromJson(input, WithdrawUserConfirmedTask.class);
 
         return withdrawRequestTask;
     }
 
-    private WithdrawClientNotifyTask makeWithdrawRequestNotifyTask(String input) {
+    private WithdrawUserRequestTask makeWithdrawRequestNotifyTask(String input) {
         Gson json = new Gson();
-        WithdrawClientNotifyTask withdrawNotifyTask = json.fromJson(input, WithdrawClientNotifyTask.class);
+        WithdrawUserRequestTask withdrawNotifyTask = json.fromJson(input, WithdrawUserRequestTask.class);
 
         return withdrawNotifyTask;
     }
@@ -1766,7 +1749,7 @@ public class ProcessRequest implements Runnable {
                         return wTask;
 
                     case API_TYPE_WITHDRAW_REQUEST:// pay with user internal wallet
-                        WithdrawRequestTask wrTask = makeWithdrawRequestTask(body);
+                        WithdrawUserConfirmedTask wrTask = makeWithdrawRequestTask(body);
                         logger.info("Receive Request: '" + type + "': ("
                                 + "'" + wrTask.getUser_id() + "',"
                                 + "'" + wrTask.getCurrency() + "',"
@@ -1776,7 +1759,7 @@ public class ProcessRequest implements Runnable {
                         return wrTask;
 
                     case API_TYPE_WITHDRAW_REQUEST_NOTIFY:// pay with user internal wallet
-                        WithdrawClientNotifyTask wrnTask = makeWithdrawRequestNotifyTask(body);
+                        WithdrawUserRequestTask wrnTask = makeWithdrawRequestNotifyTask(body);
                         logger.info("Receive Request: '" + type + "': ("
                                 + "'" + wrnTask.getUser_id() + "',"
                                 + "'" + wrnTask.getCurrency() + "',"
@@ -1923,7 +1906,7 @@ public class ProcessRequest implements Runnable {
                         return wTask;
 
                     case API_TYPE_WITHDRAW_REQUEST:// pay with user internal wallet
-                        WithdrawRequestTask wrTask = makeWithdrawRequestTask(body);
+                        WithdrawUserConfirmedTask wrTask = makeWithdrawRequestTask(body);
                         logger.info("Receive Request: '" + type + "': ("
                                 + "'" + wrTask.getUser_id() + "',"
                                 + "'" + wrTask.getCurrency() + "',"
@@ -1933,7 +1916,7 @@ public class ProcessRequest implements Runnable {
                         return wrTask;
 
                     case API_TYPE_WITHDRAW_REQUEST_NOTIFY:// pay with user internal wallet
-                        WithdrawClientNotifyTask wrnTask = makeWithdrawRequestNotifyTask(body);
+                        WithdrawUserRequestTask wrnTask = makeWithdrawRequestNotifyTask(body);
                         logger.info("Receive Request: '" + type + "': ("
                                 + "'" + wrnTask.getUser_id() + "',"
                                 + "'" + wrnTask.getCurrency() + "',"
@@ -2418,46 +2401,46 @@ public class ProcessRequest implements Runnable {
         return gson.toJson(response);
     }
 
-    private void doWithdrawClientNotify(Socket s, String postLine) {
+    private void doWithdrawUserRequest(Socket s, String postLine) {
 
         logger.info("/payment/wallet/withdraw-request ...........");
         task = decodeParms(postLine, API_TYPE_WITHDRAW_REQUEST_NOTIFY);
-        WithdrawClientNotifyTask notify = (WithdrawClientNotifyTask) task;
+        WithdrawUserRequestTask userRequest = (WithdrawUserRequestTask) task;
 
-        double[] arr = dbInf.checkLimit(notify);
+        double[] arr = dbInf.checkLimit(userRequest);
 
         int check = (int) arr[0];
         double sum = arr[1];
 
         switch (check) {
             case 0: //ok
-                UserBalance ub = dbInf.getBalance(notify.getUser_id(), notify.getCurrency());
+                UserBalance ub = dbInf.getBalance(userRequest.getUser_id(), userRequest.getCurrency());
                 double balance = ub.getAvailable();
                 try {
-                    double amount = Double.valueOf(notify.getAmount());
+                    double amount = Double.valueOf(userRequest.getAmount());
                     if (amount > balance && balance > 0) {
-                        logger.info("user " + notify.getUser_id() + " is not enough balance. Balance:" + balance);
+                        logger.info("user " + userRequest.getUser_id() + " is not enough balance. Balance:" + balance);
 
                         sendResultToClient(s, "failed", GlobalVariables.MSG_NOT_ENOUGH_BALANCE);
-//                        dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL,
-//                                Double.valueOf(notify.getAmount()),
-//                                new Timestamp(Long.valueOf(notify.getCreated_at())),
-//                                "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-//                                new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-//                                null, IDgenerator.getInstance().genID());
                         return;
                     } else if (balance > 0) {
                         sendResultToClient(s, GlobalVariables.TRANSACTION_STATUS_SUCCESS.toLowerCase(), "ok");
-                        dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_START,
-                                Double.valueOf(notify.getAmount()),
-                                new Timestamp(Long.valueOf(notify.getCreated_at())),
-                                "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-                                new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
+
+                        //insert into history
+                        dbInf.insertHistory(userRequest.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_START,
+                                Double.valueOf(userRequest.getAmount()),
+                                new Timestamp(userRequest.getCreated_at()),
+                                "", userRequest.getTo_address(), "WITHDRAW".toUpperCase(), userRequest.getUser_id(),
+                                new Timestamp(System.currentTimeMillis() + (userRequest.getExpired_time() - userRequest.getCreated_at())), userRequest.getCurrency(),
                                 null, IDgenerator.getInstance().genID(), 6, null);
+
+                        //insert into withdraw history
+                        dbInf.insertWithdrawHis(userRequest.getUser_id(), userRequest.getCurrency(), userRequest.getAmount(),
+                                userRequest.getTo_address(), userRequest.getMax_per_day(), GlobalVariables.TRANSACTION_STATUS_START, -1L, userRequest.getRequest_id());
                         return;
                     } else {
                         if (ub.getStatus() == -1) {
-                            logger.info("user id " + notify.getUser_id() + " is not found --> pleade check");
+                            logger.info("user id " + userRequest.getUser_id() + " is not found --> pleade check");
                             sendResultToClient(s, "failed", "user not found");
                         } else {
                             logger.info("System error");
@@ -2467,56 +2450,24 @@ public class ProcessRequest implements Runnable {
                 } catch (Exception ex) {
                     logger.error(ex.getMessage(), ex);
                     sendResultToClient(s, "failed", "invalid input");
-//                    dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL,
-//                            Double.valueOf(notify.getAmount()),
-//                            new Timestamp(Long.valueOf(notify.getCreated_at())),
-//                            "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-//                            new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-//                            null, IDgenerator.getInstance().genID());
                     return;
                 }
 
             case 1: //check not OK --> response user limited
                 String msg = GlobalVariables.MSG_LIMITED_WITHDRAW.replace("#WTDRAWED#", sum + "")
-                        .replace("#MAXIMUM#", notify.getMax_per_day());
+                        .replace("#MAXIMUM#", userRequest.getMax_per_day());
 
-                logger.info("User ID:" + notify.getUser_id() + " limited per day:" + msg);
+                logger.info("User ID:" + userRequest.getUser_id() + " limited per day:" + msg);
                 sendResultToClient(s, "limited", msg);
-//                dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL,
-//                        Double.valueOf(notify.getAmount()),
-//                        new Timestamp(Long.valueOf(notify.getCreated_at())),
-//                        "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-//                        new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-//                        null, IDgenerator.getInstance().genID());
                 return;
             case 2: //invalid limit input --> response error
-                logger.info("max per day invalid:" + notify.getMax_per_day());
+                logger.info("max per day invalid:" + userRequest.getMax_per_day());
                 sendResultToClient(s, "invalid", "invalid max setting");
-//                dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL,
-//                        Double.valueOf(notify.getAmount()),
-//                        new Timestamp(Long.valueOf(notify.getCreated_at())),
-//                        "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-//                        new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-//                        null, IDgenerator.getInstance().genID());
                 return;
             case -1: //system error
                 logger.info("System ERROR:");
                 sendResultToClient(s, "error", "system error");
-//                dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_FAIL,
-//                        Double.valueOf(notify.getAmount()),
-//                        new Timestamp(Long.valueOf(notify.getCreated_at())),
-//                        "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-//                        new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-//                        null, IDgenerator.getInstance().genID());
         }
-
-//        logger.info("STARTING INSERT DATABASE HISTORY FOR TRANSACTION WITHDRAW REQUEST:" + notify.getRequest_id());
-//        dbInf.insertHistory(notify.getRequest_id(), GlobalVariables.TRANSACTION_STATUS_START,
-//                Double.valueOf(notify.getAmount()),
-//                new Timestamp(Long.valueOf(notify.getCreated_at())),
-//                "", notify.getTo_address(), "WITHDRAW".toUpperCase(), notify.getUser_id(),
-//                new Timestamp(Long.valueOf(notify.getExpired_time())), notify.getCurrency(),
-//                null, IDgenerator.getInstance().genID());
     }
 
     private void doBookResponse(Socket s, String postLine) {
@@ -2539,25 +2490,6 @@ public class ProcessRequest implements Runnable {
 
                 //send notfify
                 notify(pTask.getUser_id());
-//                if (!result) {
-//                    for (int i = 0; i < 3; i++) {
-//
-//                        //sleep for next retry
-//                        try {
-//                            Thread.sleep(500);
-//                        } catch (InterruptedException ex) {
-//                            java.util.logging.Logger.getLogger(ProcessRequest.class.getName()).log(Level.SEVERE, null, ex);
-//                        }
-//
-//                        //retry i times
-//                        result = notify(pTask.getUser_id());
-//                        if (result) {
-//
-//                            //retry success --> break loop
-//                            break;
-//                        }
-//                    }
-//                }
             } else {
                 dbInf.updateStatusHistory(pTask.getBooking_number(), GlobalVariables.TRANSACTION_STATUS_FAIL, "PAY");
 
@@ -2805,9 +2737,6 @@ public class ProcessRequest implements Runnable {
                 logger.info("ignore paypal callback");
                 return;
             }
-//            else {
-//                GlobalObject.getInstance().getHashPaypalExeLink().remove(parentID);
-//            }
 
             String orderID = oPP.getOrderID();
 

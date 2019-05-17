@@ -5,8 +5,12 @@
  */
 package com.digitechlabs.paymentgw.history;
 
+import com.digitechlabs.paymentgw.configs.ConfigLoader;
 import com.digitechlabs.paymentgw.dbpooling.DBConnect;
+import com.digitechlabs.paymentgw.rateobject.Coingate;
+import com.digitechlabs.paymentgw.ssl.RestFulClient;
 import com.digitechlabs.paymentgw.utils.GlobalVariables;
+import com.google.gson.Gson;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -19,6 +23,8 @@ import utils.ProcessThread;
 public class UpdateStatusProcess extends ProcessThread {
 
     private static UpdateStatusProcess instance;
+    private RestFulClient restClient;
+    private Gson gson;
 
 //    private Notify notify = new Notify();
     public static UpdateStatusProcess getInstance() {
@@ -29,12 +35,18 @@ public class UpdateStatusProcess extends ProcessThread {
         return instance;
     }
 
+    public UpdateStatusProcess() {
+        this.restClient = new RestFulClient();
+        gson = new Gson();
+    }
+
     private final String SQL_UPDATE = "update history set status = ? where status = ? and expired_time < now()";
 
     @Override
     protected void process() {
         updateStatus();
 
+//        getRateCoingate();
         try {
             Thread.sleep(10000);
         } catch (InterruptedException ex) {
@@ -80,4 +92,11 @@ public class UpdateStatusProcess extends ProcessThread {
         }
     }
 
+    private void getRateCoingate() {
+        String resp = restClient.get("https://api.coingate.com/v2/rates/merchant");
+
+        Coingate coingate = gson.fromJson(resp, Coingate.class);
+
+        logger.info("USD:" + coingate.getUSD().getBTC());
+    }
 }

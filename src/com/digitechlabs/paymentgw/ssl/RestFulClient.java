@@ -14,7 +14,7 @@ import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
 import com.sun.jersey.client.urlconnection.HTTPSProperties;
 import com.digitechlabs.paymentgw.restobject.OrderTask;
-import com.digitechlabs.paymentgw.restobject.WithdrawRequestTask;
+import com.digitechlabs.paymentgw.restobject.WithdrawUserConfirmedTask;
 import com.digitechlabs.paymentgw.utils.GlobalVariables;
 import com.digitechlabs.paymentgw.wallet.NEP5Transfer;
 import com.digitechlabs.paymentgw.wallet.Tx;
@@ -195,7 +195,7 @@ public class RestFulClient {
         return result;
     }
 
-    public void requestWithdraw(WithdrawRequestTask task) {
+    public void requestWithdraw(WithdrawUserConfirmedTask task) {
         long start = System.currentTimeMillis();
         String[] values = new String[]{task.getCurrency(), task.getAmount(), task.getTo_address()};
         logger.info("starting post ..." + this.url);
@@ -252,6 +252,34 @@ public class RestFulClient {
             }
 
             return null;
+        } catch (ClientHandlerException | UniformInterfaceException ex) {
+            logger.error("Exception " + ex.getMessage(), ex);
+            return null;
+        } catch (Exception ex) {
+            logger.error("Exception " + ex.getMessage(), ex);
+            return null;
+        } finally {
+            if (client != null) {
+                client.destroy();
+            }
+        }
+    }
+
+    public String get(String url) {
+        long start = System.currentTimeMillis();
+        Client client = null;
+        String result;
+
+        try {
+            client = Client.create(config);
+            WebResource resource = client.resource(url);
+            ClientResponse response = resource.type("application/json").get(ClientResponse.class);
+            logger.info("sent request :" + url + " Success");
+
+            result = getStringFromInputStream(response.getEntityInputStream());
+            logger.info("Response from API was: " + result + " (in " + (System.currentTimeMillis() - start) + " ms)");
+
+            return result;
         } catch (ClientHandlerException | UniformInterfaceException ex) {
             logger.error("Exception " + ex.getMessage(), ex);
             return null;
@@ -487,7 +515,7 @@ public class RestFulClient {
         this.url = url;
     }
 
-    public String sendPost(WithdrawRequestTask task) {
+    public String sendPost(WithdrawUserConfirmedTask task) {
         HttpClient client;
         HttpPost post;
         try {

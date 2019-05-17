@@ -66,7 +66,8 @@ public class GlobalVariables {
 
     public static final String SQL_INSERT_WITHDRAW_HIS = "insert into withdraw_his (user_id, currency, amount, to_address, max_per_day,event, created_at, status, transaction_id, request_id) VALUES (?,?, ?, ?, ?,?, now(),?,?,?)";
     public static final String SQL_INSERT_DEPOSIT_HIS = "insert into deposit_his (type, event, currency, txid,timestamp,address, amount, created_at, user_id, from_address) values (?,?,?,?,?,?,?, now(),?, ?)";
-    public static final String SQL_CHECK_WITHDRAW = "select coalesce(sum(amount),0) from withdraw_his a where a.user_id = ? and a.currency = ? and a.event in ('completed','Success') and a.created_at >= date_trunc('day', now())";
+//    public static final String SQL_CHECK_WITHDRAW = "select coalesce(sum(amount),0) from withdraw_his a where a.user_id = ? and a.currency = ? and a.event in (" + TRANSACTION_STATUS_START + "," + TRANSACTION_STATUS_SUCCESS + ") and a.created_at >= date_trunc('day', now())";
+    public static final String SQL_CHECK_WITHDRAW = "select coalesce(sum(amount),0) from history a where a.user_id = ? and a.currency = ? and transaction_type = 'WITHDRAW' and a.status in ('" + TRANSACTION_STATUS_START + "','" + TRANSACTION_STATUS_SUCCESS + "') and a.created_at >= NOW() - '1 day'::INTERVAL";
     public static final String SQL_GET_BALANCE = "select balance, blocked, award from user_wallet where user_id = ? and wallet_type = ? and is_active = true";
     public static final String SQL_GET_HIS_TRANSID = "select transaction_id from history where id = ? and transaction_type = ?";
     public static final String SQL_GET_ID_FROM_HIS = "select id from history where order_id = ? and transaction_type = ?";
@@ -109,5 +110,8 @@ public class GlobalVariables {
     public static final String SQL_SELECT_REVENUE = "SELECT revenue -> 'USD' as USD, revenue -> 'EUR' as EUR, revenue -> 'AVA' as AVA, pay_type FROM transaction_history WHERE status in ('SUCCESS','paid') AND created_at >= ? AND created_at < ?";
     public static final String SQL_SELECT_ORDER_DETAIL_TYPE1 = "SELECT order_id, pay_currency, pay_amount, status FROM transaction_history WHERE order_id in (#LIST#) AND status in ('SUCCESS','paid','canceled','expired','success')";
 //    public static final String SQL_SELECT_ORDER_DETAIL_TYPE1 = "SELECT order_id, currency, amount, status FROM history WHERE order_id in (#LIST#)";
+
+    public static final String URL_RATE_COINGATE = "https://api.coingate.com/v2/rates/merchant";
+    public static final String URL_RATE_COINGEKO = "https://api.coingecko.com/api/v3/coins/concierge-io";
 
 }

@@ -3,27 +3,39 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package com.digitechlabs.paymentgw.restobject;
+package com.digitechlabs.paymentgw.history;
 
 /**
  *
  * @author FOCUS
  */
-public class WithdrawRequestTask {
+public class WithdrawUserRequestTask {
 
+    private String request_id;
     private String currency;
     private String amount;
     private String to_address;
     private String max_per_day;
     private String user_id;
-    private String request_id;
+    private Long created_at;
+    private Long expired_time;
 
-    public WithdrawRequestTask(String currency, String amount, String to_address, String max_per_day, String user_id, String request_id) {
+    public WithdrawUserRequestTask(String request_id, String currency, String amount, String to_address, String max_per_day, String user_id, Long created_at, Long expired_time) {
+        this.request_id = request_id;
         this.currency = currency;
         this.amount = amount;
         this.to_address = to_address;
         this.max_per_day = max_per_day;
         this.user_id = user_id;
+        this.created_at = created_at;
+        this.expired_time = expired_time;
+    }
+
+    public String getRequest_id() {
+        return request_id;
+    }
+
+    public void setRequest_id(String request_id) {
         this.request_id = request_id;
     }
 
@@ -67,12 +79,20 @@ public class WithdrawRequestTask {
         this.user_id = user_id;
     }
 
-    public String getRequest_id() {
-        return request_id;
+    public Long getCreated_at() {
+        return created_at;
     }
 
-    public void setRequest_id(String request_id) {
-        this.request_id = request_id;
+    public void setCreated_at(Long created_at) {
+        this.created_at = created_at;
+    }
+
+    public Long getExpired_time() {
+        return expired_time;
+    }
+
+    public void setExpired_time(Long expired_time) {
+        this.expired_time = expired_time;
     }
 
 }
